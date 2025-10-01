@@ -1,14 +1,21 @@
-﻿from __future__ import annotations
+﻿# Copyright (c) 2025 OpenFis
+# Licensed under the MIT License (see LICENSE file for details).
+"""Shared helpers for loading YAML configuration files and mapping subreddit ideology."""
+
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict
 
 import yaml
 
+# We resolve repository-relative paths so command-line scripts can reference config files
+# using short relative strings like "config/subreddits.yaml".
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def resolve_path(path: str | Path) -> Path:
+    """Return an absolute path for *path*, interpreting relative paths from the repo root."""
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = REPO_ROOT / candidate
@@ -16,6 +23,7 @@ def resolve_path(path: str | Path) -> Path:
 
 
 def load_yaml(path: str | Path) -> Any:
+    """Load a YAML file and return its contents (defaults to an empty dict when blank)."""
     file_path = resolve_path(path)
     if not file_path.exists():
         raise FileNotFoundError(f"YAML file not found: {file_path}")
@@ -25,6 +33,7 @@ def load_yaml(path: str | Path) -> Any:
 
 
 def read_subreddit_map(path: str | Path) -> Dict[str, str]:
+    """Flatten an ideology → subreddits mapping into {subreddit_lower: ideology}."""
     data = load_yaml(path)
     mapping: Dict[str, str] = {}
     if not isinstance(data, dict):

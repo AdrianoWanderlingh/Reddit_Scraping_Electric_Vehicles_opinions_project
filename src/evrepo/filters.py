@@ -1,4 +1,8 @@
-﻿from __future__ import annotations
+﻿# Copyright (c) 2025 OpenFis
+# Licensed under the MIT License (see LICENSE file for details).
+"""Keyword-based EV candidate filtering utilities."""
+
+from __future__ import annotations
 
 import re
 from dataclasses import dataclass
@@ -7,6 +11,8 @@ from typing import List, Sequence
 
 @dataclass
 class CandidateFilter:
+    """Container for compiled regex patterns that flag EV-related text."""
+
     positive_patterns: List[re.Pattern]
     context_patterns: List[re.Pattern]
     negative_patterns: List[re.Pattern]
@@ -14,6 +20,7 @@ class CandidateFilter:
 
     @classmethod
     def from_config(cls, keywords: dict | None, neg_filters: dict | Sequence[str] | None) -> "CandidateFilter":
+        """Build a filter from config dictionaries of positive/context/negative terms."""
         keywords = keywords or {}
         positive = _collect_terms(keywords)
         context = _collect_terms(keywords, keys=("context",))
@@ -33,6 +40,7 @@ class CandidateFilter:
         )
 
     def is_candidate(self, text: str) -> bool:
+        """Return True when the text should be treated as EV-related."""
         if not text:
             return False
         if any(pattern.search(text) for pattern in self.negative_patterns):
@@ -48,6 +56,7 @@ class CandidateFilter:
 
 
 def _collect_terms(config: dict | Sequence[str] | None, keys: Sequence[str] | None = None) -> List[str]:
+    """Recursively flatten a config object into a list of string terms."""
     terms: List[str] = []
     if config is None:
         return terms
@@ -69,6 +78,7 @@ def _collect_terms(config: dict | Sequence[str] | None, keys: Sequence[str] | No
 
 
 def _compile(term: str) -> re.Pattern:
+    """Compile *term* into a case-insensitive regex, honoring literal 'regex:' prefixes."""
     if term.startswith("regex:"):
         pattern = term[len("regex:"):].strip()
         return re.compile(pattern, re.IGNORECASE)
@@ -76,6 +86,7 @@ def _compile(term: str) -> re.Pattern:
 
 
 def _looks_english(text: str) -> bool:
+    """Filter out obvious non-English strings using a basic ASCII heuristic."""
     if not text:
         return False
     alpha = sum(ch.isalpha() for ch in text)

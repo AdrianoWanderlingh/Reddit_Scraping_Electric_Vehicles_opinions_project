@@ -1,4 +1,8 @@
-﻿from __future__ import annotations
+﻿# Copyright (c) 2025 OpenFis
+# Licensed under the MIT License (see LICENSE file for details).
+"""Convert a Pushshift .zst archive to CSV for quick inspection or sharing. Currenty, it does not filter by keywords or else."""
+
+from __future__ import annotations
 
 import argparse
 import csv
@@ -7,17 +11,18 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+# Allow direct execution from the repository root without installing the package.
 ROOT = Path(__file__).resolve().parents[1]
 PUSHSHIFT_PERSONAL = ROOT / "tools" / "PushshiftDumps" / "personal"
-
 if str(PUSHSHIFT_PERSONAL) not in sys.path:
     sys.path.insert(0, str(PUSHSHIFT_PERSONAL))
 
-try:  # pragma: no cover - runtime dependency
+try:  # pragma: no cover - external helper
     from utils import read_obj_zst  # type: ignore
 except ImportError as exc:  # pragma: no cover
-    raise SystemExit("Unable to import read_obj_zst from PushshiftDumps. Did you init the submodule?") from exc
+    raise SystemExit("Unable to import read_obj_zst from PushshiftDumps. Initialise the submodule first.") from exc
 
+# Sensible default field sets so novice users get a usable spreadsheet out of the box.
 DEFAULT_SUBMISSION_FIELDS: Sequence[str] = (
     "id",
     "created_iso",
@@ -29,7 +34,6 @@ DEFAULT_SUBMISSION_FIELDS: Sequence[str] = (
     "url",
     "permalink",
 )
-
 DEFAULT_COMMENT_FIELDS: Sequence[str] = (
     "id",
     "created_iso",
@@ -44,6 +48,7 @@ DEFAULT_COMMENT_FIELDS: Sequence[str] = (
 
 
 def coerce_created_iso(value: object) -> str:
+    """Convert a Pushshift created_utc value to an ISO 8601 UTC string."""
     try:
         timestamp = int(value)
     except (TypeError, ValueError):
@@ -52,6 +57,7 @@ def coerce_created_iso(value: object) -> str:
 
 
 def normalize_row(obj: dict, fields: Sequence[str]) -> list[str]:
+    """Return a list ordered according to *fields* with friendly string values."""
     row: list[str] = []
     for field in fields:
         if field == "created_iso":
@@ -63,6 +69,7 @@ def normalize_row(obj: dict, fields: Sequence[str]) -> list[str]:
 
 
 def guess_is_submission(path: Path) -> bool | None:
+    """Infer whether a file is submissions or comments based on its name."""
     name = path.name.lower()
     if "submissions" in name:
         return True
@@ -94,6 +101,7 @@ def main() -> None:
         if fields is not None:
             writer.writerow(fields)
 
+        # Iterate through every JSON object in the compressed file.
         for obj in read_obj_zst(str(args.input)):
             if fields is None:
                 is_submission = inferred_is_submission
@@ -101,8 +109,7 @@ def main() -> None:
                     is_submission = bool(obj.get("title") or obj.get("selftext"))
                 fields = DEFAULT_SUBMISSION_FIELDS if is_submission else DEFAULT_COMMENT_FIELDS
                 writer.writerow(fields)
-            row = normalize_row(obj, fields)
-            writer.writerow(row)
+            writer.writerow(normalize_row(obj, fields))
             written += 1
             if args.limit and written >= args.limit:
                 break

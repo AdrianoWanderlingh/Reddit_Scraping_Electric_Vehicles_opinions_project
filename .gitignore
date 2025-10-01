@@ -142,15 +142,10 @@ cython_debug/
 .vscode/
 
 # Local datasets and figures
-data/raw/
-data/parquet/
-data/final/
+data/
 figs/
 
 
 # agent instructions
 AGENTS.md
 
-
-# data files
-data/

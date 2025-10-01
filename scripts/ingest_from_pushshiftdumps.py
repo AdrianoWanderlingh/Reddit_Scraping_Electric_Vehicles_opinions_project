@@ -1,8 +1,17 @@
-﻿from __future__ import annotations
+﻿# Copyright (c) 2025 OpenFis
+# Licensed under the MIT License (see LICENSE file for details).
+"""Utility script that streams Pushshift .zst archives and writes EV-related rows to Parquet.
+
+The script wraps Watchful1's Pushshift helpers so analysts can filter Reddit comments or
+submissions by subreddit, time range, and EV keywords before saving partitioned Parquet files.
+"""
+
+from __future__ import annotations
 
 import sys
 from pathlib import Path
 
+# Ensure we can import the project package when the script is executed directly.
 ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
@@ -21,6 +30,7 @@ from evrepo.filters import CandidateFilter
 from evrepo.normalize import normalize
 from evrepo.utils import load_yaml, read_subreddit_map
 
+# Locate the vendored PushshiftDumps helper scripts.
 PUSHSHIFT_ROOT = ROOT / "tools" / "PushshiftDumps"
 PUSHSHIFT_PERSONAL = PUSHSHIFT_ROOT / "personal"
 PUSHSHIFT_SCRIPTS = PUSHSHIFT_ROOT / "scripts"
@@ -38,6 +48,7 @@ LOGGER = logging.getLogger("evrepo.ingest")
 
 
 def iter_records(in_dir: Path, mode: str) -> Iterator[Dict[str, Any]]:
+    """Yield raw Pushshift objects from every .zst file in *in_dir* that matches *mode*."""
     suffix = {
         "comments": "_comments.zst",
         "submissions": "_submissions.zst",
@@ -53,14 +64,17 @@ def iter_records(in_dir: Path, mode: str) -> Iterator[Dict[str, Any]]:
 
 
 def parse_time_bounds(start: str, end: str) -> tuple[int, int]:
+    """Convert ISO-style start/end strings into epoch second bounds."""
     start_dt = dt.datetime.fromisoformat(start)
     end_dt = dt.datetime.fromisoformat(end)
     if len(end.strip()) <= 10:
+        # Treat a plain date as inclusive by extending to the next day.
         end_dt += dt.timedelta(days=1)
     return int(start_dt.timestamp()), int(end_dt.timestamp())
 
 
 def within_range(utc: int | float | str | None, start_ts: int, end_ts: int) -> bool:
+    """Return True when *utc* falls within the requested time window."""
     if utc is None:
         return False
     if isinstance(utc, str):
@@ -72,12 +86,14 @@ def within_range(utc: int | float | str | None, start_ts: int, end_ts: int) -> b
 
 
 def ensure_partitions(out_dir: Path, year: int, month: int, subreddit: str) -> Path:
+    """Create and return the Parquet partition directory for the given keys."""
     path = out_dir / f"year={year:04d}" / f"month={month:02d}" / f"subreddit={subreddit}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def maybe_export_csv(in_dir: Path, out_dir: Path, mode: str) -> None:
+    """Optionally emit raw CSV dumps using Pushshift's to_csv helper for debugging."""
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = {
         "comments": "_comments.zst",
@@ -97,6 +113,7 @@ def maybe_export_csv(in_dir: Path, out_dir: Path, mode: str) -> None:
 
 
 def main() -> None:
+    """CLI entry point for converting Pushshift dumps into filtered Parquet files."""
     parser = argparse.ArgumentParser(description="Ingest Pushshift dumps into Parquet")
     parser.add_argument("--in_dir", required=True, help="Directory containing .zst files")
     parser.add_argument("--out_parquet_dir", default="data/parquet", help="Destination for Parquet output")
@@ -114,6 +131,7 @@ def main() -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), format="%(asctime)s %(levelname)s %(message)s")
 
+    # Normalise any provided subreddit filters so comparisons remain case-insensitive.
     include_subreddits = {s.lower() for s in args.subreddits} if args.subreddits else None
 
     in_dir = Path(args.in_dir)
@@ -122,6 +140,7 @@ def main() -> None:
 
     start_ts, end_ts = parse_time_bounds(args.start, args.end)
 
+    # Configuration files drive keyword selection and ideology mapping.
     keywords_cfg = load_yaml(args.keywords)
     neg_filters_cfg = load_yaml(args.neg_filters)
     ideology_by_sub = read_subreddit_map(args.ideology_map)
@@ -133,6 +152,7 @@ def main() -> None:
     if args.out_csv_dir:
         maybe_export_csv(in_dir, Path(args.out_csv_dir), args.mode)
 
+    # Define the schema once so Parquet partitions line up across batches.
     schema = pa.schema([
         ("id", pa.string()),
         ("is_submission", pa.bool_()),
@@ -152,6 +172,7 @@ def main() -> None:
     batch_size = 10_000
 
     def flush_batch() -> None:
+        """Write whatever is in *batch* to partitioned Parquet files and clear the buffer."""
         if not batch["id"]:
             return
         table = pa.table(batch, schema=schema)

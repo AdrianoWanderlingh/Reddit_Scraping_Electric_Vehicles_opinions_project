@@ -1,10 +1,15 @@
-﻿from __future__ import annotations
+﻿# Copyright (c) 2025 OpenFis
+# Licensed under the MIT License (see LICENSE file for details).
+"""Normalize Pushshift records into a common structure used across the pipeline."""
+
+from __future__ import annotations
 
 import datetime as dt
 from typing import Any, Dict
 
 
 def _parse_created_utc(value: Any) -> int | None:
+    """Best-effort conversion of ``created_utc`` into an integer epoch timestamp."""
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -16,6 +21,7 @@ def _parse_created_utc(value: Any) -> int | None:
 
 
 def _parse_int(value: Any) -> int | None:
+    """Return *value* as an int when possible, otherwise ``None``."""
     if value is None:
         return None
     try:
@@ -25,6 +31,7 @@ def _parse_int(value: Any) -> int | None:
 
 
 def _compose_text(obj: Dict[str, Any], is_submission: bool) -> str:
+    """Combine title/selftext for submissions or return the comment body."""
     if is_submission:
         title = obj.get("title") or ""
         selftext = obj.get("selftext") or ""
@@ -37,6 +44,7 @@ def _compose_text(obj: Dict[str, Any], is_submission: bool) -> str:
 
 
 def _resolve_permalink(obj: Dict[str, Any], is_submission: bool) -> str:
+    """Create a permalink-style path even when Pushshift does not provide one."""
     permalink = obj.get("permalink")
     if isinstance(permalink, str) and permalink:
         return permalink if permalink.startswith("/") else f"/{permalink.lstrip('/')}"
@@ -52,6 +60,7 @@ def _resolve_permalink(obj: Dict[str, Any], is_submission: bool) -> str:
 
 
 def normalize(obj: Dict[str, Any], ideology_map: Dict[str, str]) -> Dict[str, Any]:
+    """Return a dictionary with the canonical fields we expect downstream."""
     utc = _parse_created_utc(obj.get("created_utc"))
     dt_utc = dt.datetime.utcfromtimestamp(utc) if utc else None
 
