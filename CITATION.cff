@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "OpenFis Research Software for Reddit_Scraping_Electric_Vehicles_opinions_project"
+version: "1.0.0"
+authors:
+  - family-names: "Wanderlingh"
+    given-names: "Adriano Alistair"
+    affiliation: "OpenFis s.r.l. - Spin Off Accademico"
+    orcid: "https://orcid.org/0000-0000-0000-0000"   # optional
+repository-code: "https://github.com/AdrianoWanderlingh/Reddit_Scraping_Electric_Vehicles_opinions_project"
+license: "MIT"
+date-released: 2025-10-01

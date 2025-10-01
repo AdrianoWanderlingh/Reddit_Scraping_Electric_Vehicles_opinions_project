@@ -1,0 +1,5 @@
+fusion:
+  weak_weight: 0.4
+  nli_weight: 0.6
+  neutral_threshold: 0.55
+subject_tie_break_priority: ["mandate","product","policy"]

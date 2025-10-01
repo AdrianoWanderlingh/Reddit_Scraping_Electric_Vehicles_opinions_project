@@ -1,0 +1,27 @@
+product_core:
+  - "\\bEVs?\\b"
+  - "\\belectric vehicle(s)?\\b"
+  - "\\belectric car(s)?\\b"
+  - "\\bBEVs?\\b"
+  - "\\bPHEVs?\\b"
+  - "\\bplug[- ]?in hybrid(s)?\\b"
+product_context:
+  - "battery"
+  - "charging|charger|fast charge|Supercharger"
+  - "kWh|range|home charger"
+
+mandate:
+  - "mandate|ban(ned|ning)?|require(d|ment)?|phase[- ]?out|2035"
+
+policy_non_mandate:
+  - "subsid(y|ies)|rebate|incentive|tax credit|CAFE|EPA|CARB|NHTSA|regulation|standard(s)?|ZEV|zero[- ]emission"
+
+pro_cues:
+  product: ["lower running cost","zero emission(s)","bought an EV","love my EV","quieter","less maintenance"]
+  mandate: ["necessary to meet climate goals","support the mandate","we need the ban"]
+  policy:  ["tax credit helps","policy works","subsidies accelerate adoption","standards are needed"]
+
+anti_cues:
+  product: ["range anxiety","too expensive","battery fire","reliability issues","cobalt child labor"]
+  mandate: ["authoritarian mandate","government overreach","ban is wrong","forcing people"]
+  policy:  ["waste of taxpayers' money","policy failure","subsidies distort market"]

@@ -1,0 +1,5 @@
+drop_regex:
+  - "\\bexpected value\\b|\\bEV of\\b"
+  - "\\belectron[- ]?volt(s)?\\b|\\b\\d+(\\.\\d+)?\\s?eV\\b"
+  - "\\bEVE Online\\b"
+language: "en"

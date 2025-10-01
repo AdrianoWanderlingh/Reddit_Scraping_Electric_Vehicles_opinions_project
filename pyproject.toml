@@ -1,0 +1,51 @@
+﻿[tool.poetry]
+name = "ev-stance-reddit"
+version = "0.1.0"
+description = "Classify Reddit posts/comments into 9 categories (Pro/Against/Neutral × Product/Mandate/Policy) by ideology and generate sentiment, trends, and distinctive n-grams."
+authors = ["Your Name <you@example.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [
+    { include = "evrepo", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
+polars = "^0.20.21"
+pyarrow = "^15.0.0"
+duckdb = "^0.10.2"
+zstandard = "^0.22.0"
+orjson = "^3.10.0"
+pyyaml = "^6.0.1"
+regex = "^2024.5.15"
+spacy = "^3.7.4"
+vaderSentiment = "^3.3.2"
+transformers = "^4.40.0"
+torch = "^2.2.0"
+sentence-transformers = "^2.6.1"
+typer = { version = "^0.12.3", extras = ["all"] }
+pydantic = "^2.6.3"
+scikit-learn = "^1.4.1"
+nltk = "^3.8.1"
+matplotlib = "^3.8.3"
+plotly = "^5.19.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.1.1"
+ruff = "^0.3.0"
+black = "^24.3.0"
+isort = "^5.13.2"
+pre-commit = "^3.6.2"
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+select = ["E", "F", "B", "I"]
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"

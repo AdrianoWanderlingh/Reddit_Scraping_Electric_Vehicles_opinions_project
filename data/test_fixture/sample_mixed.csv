@@ -1,0 +1,3 @@
+id,created_iso,subreddit,author,title,selftext,score,url,permalink
+abc123,2025-10-01T10:02:02Z,AskALiberal,tester,Electric vehicles are great,EVs have long range and charging options. electric vehicle mandate,10,,/r/AskALiberal/comments/abc123/example/
+def456,2025-10-01T10:02:02Z,AskConservatives,tester2,,,5,,/r/AskConservatives/comments/abc123/comment/def456/
