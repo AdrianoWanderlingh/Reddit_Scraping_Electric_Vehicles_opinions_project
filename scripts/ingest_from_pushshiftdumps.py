@@ -21,6 +21,7 @@ import argparse
 import datetime as dt
 import logging
 import subprocess
+import uuid
 from typing import Any, Dict, Iterator
 
 import pyarrow as pa
@@ -187,14 +188,14 @@ def main() -> None:
             if year is None or month is None or subreddit is None:
                 continue
             partition_dir = ensure_partitions(out_root, int(year), int(month), subreddit)
-            part_path = partition_dir / "part.parquet"
+            filename = f"part-{uuid.uuid4().hex[:8]}.parquet"
+            part_path = partition_dir / filename
             partition_table = pa.table(rows, schema=schema)
-            if part_path.exists():
-                existing = pq.read_table(part_path)
-                partition_table = pa.concat_tables([existing, partition_table], promote=True)
             pq.write_table(partition_table, part_path)
         for name in schema.names:
             batch[name].clear()
+
+
 
     processed = 0
     for obj in iter_records(in_dir, args.mode):
@@ -256,3 +257,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

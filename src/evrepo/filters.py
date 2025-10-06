@@ -6,7 +6,49 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Sequence
+from typing import Dict, List, Sequence
+
+__all__ = ["CandidateFilter", "reweight_scores"]
+
+
+def _flatten_terms(value) -> List[str]:
+    """Recursively flatten strings / iterables into a simple string list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    result: List[str] = []
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            result.extend(_flatten_terms(item))
+        return result
+    if isinstance(value, dict):
+        for item in value.values():
+            result.extend(_flatten_terms(item))
+        return result
+    return result
+
+
+def _compile(term: str) -> re.Pattern:
+    """Compile *term* into a case-insensitive regex, honouring explicit regex markers."""
+    if term.startswith("regex:"):
+        pattern = term[len("regex:") :].strip()
+        return re.compile(pattern, re.IGNORECASE)
+    return re.compile(term, re.IGNORECASE)
+
+
+
+
+
+def _looks_english(text: str) -> bool:
+    """Basic heuristic to reject obviously non-English strings."""
+    if not text:
+        return False
+    alpha = sum(ch.isalpha() for ch in text)
+    non_ascii = sum(ord(ch) > 127 for ch in text)
+    if alpha == 0:
+        return False
+    return non_ascii <= alpha * 0.5
 
 
 @dataclass
@@ -21,14 +63,20 @@ class CandidateFilter:
     @classmethod
     def from_config(cls, keywords: dict | None, neg_filters: dict | Sequence[str] | None) -> "CandidateFilter":
         """Build a filter from config dictionaries of positive/context/negative terms."""
-        keywords = keywords or {}
-        positive = _collect_terms(keywords)
-        context = _collect_terms(keywords, keys=("context",))
-        negative = _collect_terms(neg_filters)
 
-        positive_patterns = [_compile(term) for term in positive if term]
-        context_patterns = [_compile(term) for term in context if term]
-        negative_patterns = [_compile(term) for term in negative if term]
+        keywords = keywords or {}
+        product_core_terms = _flatten_terms(keywords.get("product_core"))
+        product_context_terms = _flatten_terms(keywords.get("product_context"))
+
+        negative_terms: List[str] = []
+        if isinstance(neg_filters, dict):
+            negative_terms = _flatten_terms(neg_filters.get("drop_regex"))
+        else:
+            negative_terms = _flatten_terms(neg_filters)
+
+        positive_patterns = [_compile(term) for term in product_core_terms if term]
+        context_patterns = [_compile(term) for term in product_context_terms if term]
+        negative_patterns = [_compile(term) for term in negative_terms if term]
 
         require_context = bool(context_patterns) and bool(positive_patterns)
 
@@ -43,6 +91,7 @@ class CandidateFilter:
         """Return True when the text should be treated as EV-related."""
         if not text:
             return False
+        text = text.lower()
         if any(pattern.search(text) for pattern in self.negative_patterns):
             return False
         has_positive = any(pattern.search(text) for pattern in self.positive_patterns)
@@ -55,42 +104,10 @@ class CandidateFilter:
         return True
 
 
-def _collect_terms(config: dict | Sequence[str] | None, keys: Sequence[str] | None = None) -> List[str]:
-    """Recursively flatten a config object into a list of string terms."""
-    terms: List[str] = []
-    if config is None:
-        return terms
-    if isinstance(config, str):
-        return [config]
-    if isinstance(config, (list, tuple, set)):
-        for item in config:
-            terms.extend(_collect_terms(item, keys))
-        return terms
-    if isinstance(config, dict):
-        for key, value in config.items():
-            key_lc = str(key).lower()
-            if keys is None or any(k in key_lc for k in keys):
-                terms.extend(_collect_terms(value, None))
-            else:
-                terms.extend(_collect_terms(value, keys))
-        return terms
-    return terms
+def reweight_scores(scores: Dict[str, float], subject: str, bonus: float) -> Dict[str, float]:
+    """Utility used by tests: manually adjust a subject score by *bonus*."""
 
+    updated = dict(scores)
+    updated[subject] = updated.get(subject, 0.0) + bonus
+    return updated
 
-def _compile(term: str) -> re.Pattern:
-    """Compile *term* into a case-insensitive regex, honoring literal 'regex:' prefixes."""
-    if term.startswith("regex:"):
-        pattern = term[len("regex:"):].strip()
-        return re.compile(pattern, re.IGNORECASE)
-    return re.compile(rf"(?i)\b{re.escape(term)}\b")
-
-
-def _looks_english(text: str) -> bool:
-    """Filter out obvious non-English strings using a basic ASCII heuristic."""
-    if not text:
-        return False
-    alpha = sum(ch.isalpha() for ch in text)
-    non_ascii = sum(ord(ch) > 127 for ch in text)
-    if alpha == 0:
-        return False
-    return non_ascii <= alpha * 0.5
