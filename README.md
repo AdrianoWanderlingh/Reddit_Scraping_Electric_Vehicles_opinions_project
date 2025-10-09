@@ -80,3 +80,29 @@ If you use this software in your research, please use the GitHub “Cite this re
 ---
 
 © 2025 OpenFis — Licensed under the MIT License (see `LICENSE`).
+
+
+## Quick Test (≤3 rows)
+
+Use these commands to sanity-check the pipeline quickly. Replace `<dir>` with your parquet sample.
+
+```bash
+# stance labelling (≤3 rows)
+PYTHONPATH=src python scripts/run_label_sample.py   --parquet_dir <dir>   --out_csv data/stance_labels.csv   --limit 3   --log_level INFO
+
+# sentiment scoring (≤3 rows)
+PYTHONPATH=src python scripts/run_sentiment_sample.py   --parquet_dir <dir>   --out_csv data/sentiment_labels.csv   --limit 3   --log_level INFO
+
+# tiny benchmark (≤3 rows)
+PYTHONPATH=src python scripts/tiny_benchmark.py --parquet_dir <dir>
+```
+
+Each command finishes in seconds, printing `Completed in … (rows/sec=…)` or benchmark summaries. The stance CSV should contain subject/stance columns (`final_subject`, `final_stance`, `final_category`, `fused_pro`, `fused_anti`, `confidence`). The sentiment CSV contains only sentiment columns (e.g., `sent_vader_compound`, `sent_transformer_label`, `sent_transformer_score`).
+
+Optional combined run:
+
+```bash
+PYTHONPATH=src python scripts/run_pipeline_quick.py   --parquet_dir <dir>   --limit 3   --merge   --log_level INFO
+```
+
+This labels stances, scores sentiment, and (with `--merge`) writes a merged CSV keyed on `id`. All built-in tests are capped at three rows for speed; minor differences between runs are expected.
