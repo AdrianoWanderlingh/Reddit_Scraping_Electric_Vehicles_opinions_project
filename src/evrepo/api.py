@@ -11,6 +11,7 @@ import polars as pl
 
 from .fuse_label import LabelDecision, LabelFuser
 from .nli_zeroshot import NliScore, ZeroShotScorer, SUBJECTS
+from .paths import ensure_parent
 from .sentiment import SentimentAnalyzer
 from .subjects import SubjectScorer
 from .utils import load_yaml

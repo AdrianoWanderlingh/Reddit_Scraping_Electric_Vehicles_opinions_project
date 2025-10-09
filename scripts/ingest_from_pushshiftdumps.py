@@ -139,6 +139,16 @@ def main() -> None:
     if not in_dir.exists():
         raise FileNotFoundError(f"Input directory not found: {in_dir}")
 
+    out_root = Path(args.out_parquet_dir)
+    if out_root.exists() and any(out_root.rglob('*.parquet')):
+        logging.info("Parquet output %s already populated; skipping ingestion. Remove or rename the directory to re-run.", out_root)
+        return
+
+    out_root = Path(args.out_parquet_dir)
+    if out_root.exists() and any(out_root.rglob("*.parquet")):
+        logging.info("Output directory %s already contains parquet files; skipping ingestion. Remove or rename the directory to re-run.", out_root)
+        return
+
     start_ts, end_ts = parse_time_bounds(args.start, args.end)
 
     # Configuration files drive keyword selection and ideology mapping.
