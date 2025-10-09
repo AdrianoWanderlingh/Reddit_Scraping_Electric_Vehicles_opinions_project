@@ -6,30 +6,30 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
-import sys
 import time
 from pathlib import Path
 
 import polars as pl
 
+from evrepo.api import run_stance_label, run_sentiment
+from evrepo.paths import DEFAULT_DATA_DIR, ensure_parent
+from evrepo.api import run_stance_label, run_sentiment
 LIMIT = 3
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Tiny benchmark for stance + sentiment")
     parser.add_argument("--parquet_dir", required=True, help="Parquet directory to sample")
-    parser.add_argument("--stance_csv", default="data/stance_labels.csv")
-    parser.add_argument("--sentiment_csv", default="data/sentiment_labels.csv")
+    parser.add_argument("--stance_csv", default=str(DEFAULT_DATA_DIR / "tiny_benchmark" / "stance_labels.csv"))
+    parser.add_argument("--sentiment_csv", default=str(DEFAULT_DATA_DIR / "tiny_benchmark" / "sentiment_labels.csv"))
     parser.add_argument("--log_level", default="INFO")
     return parser.parse_args()
 
 
-def run_command(cmd: list[str]) -> tuple[float, str]:
+def run_command(func, *args, **kwargs) -> float:
     start = time.perf_counter()
-    completed = subprocess.run(cmd, check=True, text=True, capture_output=False)
-    elapsed = time.perf_counter() - start
-    return elapsed, ""
+    func(*args, **kwargs)
+    return time.perf_counter() - start
 
 
 def stance_summary(csv_path: Path) -> dict:
@@ -44,36 +44,27 @@ def main() -> None:
     if not parquet_dir.exists():
         raise FileNotFoundError(parquet_dir)
 
-    stance_cmd = [
-        sys.executable,
-        "scripts/run_label_sample.py",
-        "--parquet_dir",
-        str(parquet_dir),
-        "--out_csv",
-        args.stance_csv,
-        "--limit",
-        str(LIMIT),
-        "--log_level",
-        args.log_level,
-    ]
+    stance_path = ensure_parent(Path(args.stance_csv))
+    sentiment_path = ensure_parent(Path(args.sentiment_csv))
 
-    sentiment_cmd = [
-        sys.executable,
-        "scripts/run_sentiment_sample.py",
-        "--parquet_dir",
-        str(parquet_dir),
-        "--out_csv",
-        args.sentiment_csv,
-        "--limit",
-        str(LIMIT),
-        "--log_level",
-        args.log_level,
-    ]
+    stance_elapsed = run_command(
+        run_stance_label,
+        parquet_dir,
+        stance_path,
+        limit=LIMIT,
+        log_level=args.log_level,
+        fast_model=True,
+        batch_size=16,
+    )
+    stance_counts = stance_summary(stance_path)
 
-    stance_elapsed, _ = run_command(stance_cmd)
-    stance_counts = stance_summary(Path(args.stance_csv))
-
-    sentiment_elapsed, _ = run_command(sentiment_cmd)
+    sentiment_elapsed = run_command(
+        run_sentiment,
+        parquet_dir,
+        sentiment_path,
+        limit=LIMIT,
+        log_level=args.log_level,
+    )
 
     print(
         f"stance: limit={LIMIT} elapsed={stance_elapsed:.2f}s rows/sec={LIMIT / stance_elapsed if stance_elapsed else float('inf'):.2f} "

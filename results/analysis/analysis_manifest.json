@@ -1,0 +1,11 @@
+{
+  "stance_csv": "results\\stance.csv",
+  "sentiment_csv": "results\\sentiment.csv",
+  "timeframe": "monthly",
+  "limit": 3,
+  "outputs": [
+    "trend_monthly.png",
+    "sentiment_boxplot.png",
+    "distinctive_ngrams.csv"
+  ]
+}
