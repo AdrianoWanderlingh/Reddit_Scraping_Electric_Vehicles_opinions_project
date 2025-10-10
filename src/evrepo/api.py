@@ -91,10 +91,12 @@ def run_stance_label(
     debug: bool = False,
     use_weak_rules: bool = False,
     rules_mode: str = "simple",
-    fast_model: bool = False,
+    fast_model: bool = True,
     backend: str = "torch",
     batch_size: int = 32,
     verify: bool = False,
+    resume: bool = True,
+    overwrite: bool = False,
 ) -> Dict[str, float]:
     """Label stances and write a CSV. Returns timing/row stats."""
 
@@ -119,7 +121,22 @@ def run_stance_label(
     fuser = LabelFuser(labeling_cfg.get("fusion"), labeling_cfg.get("subject_tie_break_priority", []))
 
     start_time = time.perf_counter()
+    # If output exists, build a set of already-processed IDs for skip/resume.
+    out_path = Path(out_csv)
+    processed_ids: set[str] = set()
+    skipped_count = 0
+    if resume and not overwrite and out_path.exists():
+        try:
+            existing = pl.read_csv(out_path, ignore_errors=True)
+            if "id" in existing.columns and existing.height > 0:
+                processed_ids = set(existing.get_column("id").cast(pl.Utf8).to_list())
+        except Exception as exc:  # pragma: no cover
+            LOGGER.warning("Unable to read existing stance CSV %s: %s", out_path, exc)
+
     df = _load_inputs(parquet_path, limit)
+    if processed_ids:
+        skipped_count = len(processed_ids)
+        df = df.filter(~pl.col("id").cast(pl.Utf8).is_in(list(processed_ids)))
     if df.height == 0:
         return {"rows": 0, "elapsed": 0.0, "rows_per_sec": 0.0}
 
@@ -146,12 +163,12 @@ def run_stance_label(
     for i, row in enumerate(rows):
         text_value = texts[i]
         subject_scores = subject_scorer.score(text_value)
+        nli_row = {subject: nli_scores[subject][i] for subject in SUBJECTS}
         if use_weak_rules and weak_scorer is not None:
             weak_scores = weak_scorer.score(text_value)
+            decision: LabelDecision = fuser.fuse(subject_scores, weak_scores, nli_row)
         else:
-            weak_scores = zero_scores
-        nli_row = {subject: nli_scores[subject][i] for subject in SUBJECTS}
-        decision: LabelDecision = fuser.fuse(subject_scores, weak_scores, nli_row)
+            decision: LabelDecision = fuser.decide_nli_only(subject_scores, nli_row)
 
         if logger.isEnabledFor(logging.DEBUG) and debug_counter < 3:
             logger.debug(
@@ -220,13 +237,37 @@ def run_stance_label(
             )
         output_rows.append(record)
 
-    out_path = Path(out_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    pl.DataFrame(output_rows).write_csv(out_path)
+    new_df = pl.DataFrame(output_rows)
+    # If file exists and not overwriting, merge (dedup by id) to ensure idempotency.
+    if overwrite:
+        new_df.write_csv(out_path)
+    elif out_path.exists():
+        try:
+            prior = pl.read_csv(out_path, ignore_errors=True)
+            if prior.height > 0:
+                combined = (
+                    pl.concat([prior, new_df], how="vertical", rechunk=True)
+                    .unique(subset=["id"], keep="first")
+                )
+                combined.write_csv(out_path)
+            else:
+                new_df.write_csv(out_path)
+        except Exception:
+            # Fallback: overwrite with new only
+            new_df.write_csv(out_path)
+    else:
+        new_df.write_csv(out_path)
     elapsed = time.perf_counter() - start_time
     rows_processed = len(output_rows)
     rows_per_sec = rows_processed / elapsed if elapsed else float("inf")
-    logger.info("Wrote %d labelled rows to %s", rows_processed, out_path)
+    logger.info(
+        "Wrote %d labelled rows to %s (skipped_existing_ids=%d, overwrite=%s)",
+        rows_processed,
+        out_path,
+        skipped_count,
+        overwrite,
+    )
     logger.info("Completed in %.2f seconds (rows/sec=%.2f)", elapsed, rows_per_sec)
 
     return {"rows": rows_processed, "elapsed": elapsed, "rows_per_sec": rows_per_sec}
@@ -239,6 +280,8 @@ def run_sentiment(
     limit: int | None = None,
     log_level: str = "INFO",
     debug: bool = False,
+    resume: bool = True,
+    overwrite: bool = False,
 ) -> Dict[str, float]:
     """Compute sentiment scores and write a CSV."""
 
@@ -252,7 +295,21 @@ def run_sentiment(
         raise FileNotFoundError(parquet_path)
 
     start_time = time.perf_counter()
+    out_path = Path(out_csv)
+    processed_ids: set[str] = set()
+    skipped_count = 0
+    if resume and not overwrite and out_path.exists():
+        try:
+            existing = pl.read_csv(out_path, ignore_errors=True)
+            if "id" in existing.columns and existing.height > 0:
+                processed_ids = set(existing.get_column("id").cast(pl.Utf8).to_list())
+        except Exception as exc:  # pragma: no cover
+            LOGGER.warning("Unable to read existing sentiment CSV %s: %s", out_path, exc)
+
     df = _load_inputs(parquet_path, limit)
+    if processed_ids:
+        skipped_count = len(processed_ids)
+        df = df.filter(~pl.col("id").cast(pl.Utf8).is_in(list(processed_ids)))
     if df.height == 0:
         return {"rows": 0, "elapsed": 0.0, "rows_per_sec": 0.0}
 
@@ -286,13 +343,35 @@ def run_sentiment(
             }
         )
 
-    out_path = Path(out_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    pl.DataFrame(results).write_csv(out_path)
+    new_df = pl.DataFrame(results)
+    if overwrite:
+        new_df.write_csv(out_path)
+    elif out_path.exists():
+        try:
+            prior = pl.read_csv(out_path, ignore_errors=True)
+            if prior.height > 0:
+                combined = (
+                    pl.concat([prior, new_df], how="vertical", rechunk=True)
+                    .unique(subset=["id"], keep="first")
+                )
+                combined.write_csv(out_path)
+            else:
+                new_df.write_csv(out_path)
+        except Exception:
+            new_df.write_csv(out_path)
+    else:
+        new_df.write_csv(out_path)
     elapsed = time.perf_counter() - start_time
     rows_processed = len(results)
     rows_per_sec = rows_processed / elapsed if elapsed else float("inf")
-    logger.info("Wrote %d rows to %s", rows_processed, out_path)
+    logger.info(
+        "Wrote %d sentiment rows to %s (skipped_existing_ids=%d, overwrite=%s)",
+        rows_processed,
+        out_path,
+        skipped_count,
+        overwrite,
+    )
     logger.info("Completed in %.2f seconds (rows/sec=%.2f)", elapsed, rows_per_sec)
 
     return {"rows": rows_processed, "elapsed": elapsed, "rows_per_sec": rows_per_sec}

@@ -15,6 +15,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--log_level", default="INFO")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite output CSV instead of resuming")
+    parser.add_argument("--no_resume", action="store_true", help="Do not skip existing IDs if output CSV exists")
     return parser.parse_args()
 
 
@@ -27,6 +29,8 @@ def main() -> None:
         limit=args.limit,
         log_level=args.log_level,
         debug=args.debug,
+        resume=(not args.no_resume),
+        overwrite=args.overwrite,
     )
 
 

@@ -21,10 +21,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeframe", choices=["monthly", "quarterly"], default="monthly")
     parser.add_argument("--limit", type=int, default=None, help="Optional limit for dry runs")
     parser.add_argument("--log_level", default="INFO")
-    parser.add_argument("--fast_model", action="store_true", help="Use a smaller MNLI model")
+    parser.add_argument("--large_model", action="store_true", help="Use the larger MNLI model (default: fast tiny model)")
     parser.add_argument("--use_weak_rules", action="store_true")
     parser.add_argument("--rules_mode", choices=["simple", "full"], default="simple")
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--overwrite_stance", action="store_true", help="Overwrite stance CSV instead of resuming")
+    parser.add_argument("--overwrite_sentiment", action="store_true", help="Overwrite sentiment CSV instead of resuming")
+    parser.add_argument("--no_resume", action="store_true", help="Do not skip existing IDs if outputs exist")
     return parser.parse_args()
 
 
@@ -46,10 +49,12 @@ def main() -> None:
         stance_csv,
         limit=args.limit,
         log_level=args.log_level,
-        fast_model=args.fast_model,
+        fast_model=(not args.large_model),
         use_weak_rules=args.use_weak_rules,
         rules_mode=args.rules_mode,
         batch_size=args.batch_size,
+        resume=(not args.no_resume),
+        overwrite=args.overwrite_stance,
     )
     stance_elapsed = time.perf_counter() - stance_start
     logging.info(
@@ -65,6 +70,8 @@ def main() -> None:
         sentiment_csv,
         limit=args.limit,
         log_level=args.log_level,
+        resume=(not args.no_resume),
+        overwrite=args.overwrite_sentiment,
     )
     sentiment_elapsed = time.perf_counter() - sentiment_start
     logging.info(

@@ -85,3 +85,32 @@ class LabelFuser:
 
     def _combine(self, weak: float, nli: float) -> float:
         return self.weak_weight * weak + self.nli_weight * nli
+
+    def decide_nli_only(
+        self,
+        subject_scores: SubjectScores,
+        nli_scores: Dict[str, NliScore],
+    ) -> LabelDecision:
+        """Fast-path decision using NLI only (no weak-rule fusion).
+
+        - Chooses primary subject using subject_scores and configured tie-break priority.
+        - Applies neutral threshold to the subject's (pro, anti) entailment probabilities.
+        - Returns a LabelDecision with fused_* equal to the raw NLI probabilities.
+        """
+        subject = subject_scores.primary(self.subject_priority)
+        nli = nli_scores.get(subject) or NliScore(0.0, 0.0)
+        pro, anti = nli.pro, nli.anti
+        if max(pro, anti) < self.neutral_threshold:
+            stance = "neutral"
+        else:
+            stance = "pro" if pro >= anti else "anti"
+        category = STANCE_MAP[(subject, stance)]
+        confidence = abs(pro - anti)
+        return LabelDecision(
+            subject=subject,
+            stance=stance,
+            category=category,
+            confidence=confidence,
+            fused_pro=pro,
+            fused_anti=anti,
+        )
