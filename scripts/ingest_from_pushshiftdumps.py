@@ -21,10 +21,12 @@ import argparse
 import datetime as dt
 import logging
 import subprocess
-from typing import Any, Dict, Iterator
+import uuid
+from typing import Any, Dict, Iterator, Set
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pyarrow.dataset as ds
 
 from evrepo.filters import CandidateFilter
 from evrepo.normalize import normalize
@@ -47,8 +49,13 @@ except ImportError as exc:  # pragma: no cover
 LOGGER = logging.getLogger("evrepo.ingest")
 
 
-def iter_records(in_dir: Path, mode: str) -> Iterator[Dict[str, Any]]:
-    """Yield raw Pushshift objects from every .zst file in *in_dir* that matches *mode*."""
+def iter_records(in_dir: Path, mode: str, include_subreddits: Set[str] | None = None) -> Iterator[Dict[str, Any]]:
+    """Yield raw Pushshift objects from every .zst file in *in_dir* that matches *mode*.
+
+    When ``include_subreddits`` is provided, we attempt a fast file-level filter by
+    matching the filename prefix (e.g., ``AskALiberal_comments.zst`` → ``askaliberal``)
+    before falling back to per-record subreddit checks downstream.
+    """
     suffix = {
         "comments": "_comments.zst",
         "submissions": "_submissions.zst",
@@ -57,6 +64,13 @@ def iter_records(in_dir: Path, mode: str) -> Iterator[Dict[str, Any]]:
     for path in sorted(in_dir.rglob("*.zst")):
         if suffix and not path.name.endswith(suffix):
             continue
+        if include_subreddits:
+            name_lower = path.stem.lower()
+            # heuristic: take prefix before first underscore as subreddit name
+            subreddit_hint = name_lower.split("_", 1)[0]
+            if subreddit_hint not in include_subreddits:
+                # Skip files that obviously don't belong to the requested subs
+                continue
         LOGGER.debug("Reading %s", path)
         for obj in read_obj_zst(str(path)):
             obj["__source_path"] = str(path)
@@ -138,6 +152,10 @@ def main() -> None:
     if not in_dir.exists():
         raise FileNotFoundError(f"Input directory not found: {in_dir}")
 
+    # Do not short-circuit if output exists; we support idempotent re-runs
+    # and will skip/append per-partition based on existing IDs.
+    out_root = Path(args.out_parquet_dir)
+
     start_ts, end_ts = parse_time_bounds(args.start, args.end)
 
     # Configuration files drive keyword selection and ideology mapping.
@@ -170,9 +188,34 @@ def main() -> None:
 
     batch: Dict[str, list[Any]] = {name: [] for name in schema.names}
     batch_size = 10_000
+    # metrics for visibility
+    rows_dedup_skipped = 0
+    partitions_written = 0
+    partitions_skipped = 0
+
+    def _load_existing_ids(partition_dir: Path) -> set[str]:
+        """Return the set of IDs already present in a partition directory.
+
+        If no parquet files exist yet, return an empty set. This enables
+        idempotent ingestion when the pipeline is re-run for the same
+        subreddit/month partitions.
+        """
+        if not partition_dir.exists():
+            return set()
+        try:
+            dataset = ds.dataset(str(partition_dir), format="parquet")
+            if not dataset.files:
+                return set()
+            table = dataset.to_table(columns=["id"])  # only read the ID column
+            ids = table.column("id").to_pylist()
+            return {str(x) for x in ids if x is not None}
+        except Exception as exc:  # pragma: no cover
+            LOGGER.warning("Failed reading existing IDs in %s: %s", partition_dir, exc)
+            return set()
 
     def flush_batch() -> None:
         """Write whatever is in *batch* to partitioned Parquet files and clear the buffer."""
+        nonlocal rows_dedup_skipped, partitions_written, partitions_skipped
         if not batch["id"]:
             return
         table = pa.table(batch, schema=schema)
@@ -187,17 +230,38 @@ def main() -> None:
             if year is None or month is None or subreddit is None:
                 continue
             partition_dir = ensure_partitions(out_root, int(year), int(month), subreddit)
-            part_path = partition_dir / "part.parquet"
+
+            # Idempotency: skip rows whose IDs already exist in this partition.
+            existing_ids = _load_existing_ids(partition_dir)
+            if existing_ids:
+                keep_idx = [i for i, _id in enumerate(rows["id"]) if _id not in existing_ids]
+                if not keep_idx:
+                    LOGGER.info(
+                        "Partition year=%s month=%s subreddit=%s already up-to-date; skipping",
+                        year,
+                        month,
+                        subreddit,
+                    )
+                    partitions_skipped += 1
+                    continue
+                # Filter each column to only new rows
+                for name in schema.names:
+                    col = rows[name]
+                    rows[name] = [col[i] for i in keep_idx]
+                rows_dedup_skipped += len(existing_ids)
+
+            filename = f"part-{uuid.uuid4().hex[:8]}.parquet"
+            part_path = partition_dir / filename
             partition_table = pa.table(rows, schema=schema)
-            if part_path.exists():
-                existing = pq.read_table(part_path)
-                partition_table = pa.concat_tables([existing, partition_table], promote=True)
             pq.write_table(partition_table, part_path)
+            partitions_written += 1
         for name in schema.names:
             batch[name].clear()
 
+
+
     processed = 0
-    for obj in iter_records(in_dir, args.mode):
+    for obj in iter_records(in_dir, args.mode, include_subreddits):
         utc = obj.get("created_utc")
         if not within_range(utc, start_ts, end_ts):
             continue
@@ -251,8 +315,15 @@ def main() -> None:
             LOGGER.info("Processed %d records", processed)
 
     flush_batch()
-    LOGGER.info("Ingest complete. Total processed: %d", processed)
+    LOGGER.info(
+        "Ingest complete. Total processed: %d, partitions_written=%d, partitions_skipped=%d, rows_dedup_skipped≈%d",
+        processed,
+        partitions_written,
+        partitions_skipped,
+        rows_dedup_skipped,
+    )
 
 
 if __name__ == "__main__":
     main()
+

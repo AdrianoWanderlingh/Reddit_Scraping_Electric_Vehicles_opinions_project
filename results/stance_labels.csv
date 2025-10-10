@@ -1,0 +1,4 @@
+id,created_utc,subreddit,ideology_group,text,subject_product_raw,subject_product_norm,subject_mandate_raw,subject_mandate_norm,subject_policy_raw,subject_policy_norm,nli_product_pro,nli_product_anti,nli_mandate_pro,nli_mandate_anti,nli_policy_pro,nli_policy_anti,final_subject,final_stance,final_category,fused_pro,fused_anti,confidence
+abc123,1759312922,AskALiberal,,"Electric vehicles are great
+
+EVs have long range and charging options. electric vehicle mandate",4.0,0.9816843611112658,1.0,0.6321205588285577,0.0,0.0,0.7370032668113708,0.7331267595291138,0.6111232042312622,0.6217654943466187,0.766492486000061,0.7580970525741577,product,neutral,Neutral-EV (product),0.4422019600868225,0.43987605571746824,0.002325904369354259

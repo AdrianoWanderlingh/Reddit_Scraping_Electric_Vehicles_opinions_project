@@ -32,6 +32,20 @@ def load_yaml(path: str | Path) -> Any:
     return data or {}
 
 
+def _normalize_subreddit_name(name: str) -> str:
+    """Canonicalize subreddit names for lookups.
+
+    - Strips leading "r/" or "/r/" if present.
+    - Lowercases the remainder.
+    """
+    s = (name or "").strip()
+    if s.startswith("/r/"):
+        s = s[3:]
+    elif s.startswith("r/"):
+        s = s[2:]
+    return s.lower()
+
+
 def read_subreddit_map(path: str | Path) -> Dict[str, str]:
     """Flatten an ideology → subreddits mapping into {subreddit_lower: ideology}."""
     data = load_yaml(path)
@@ -55,5 +69,8 @@ def read_subreddit_map(path: str | Path) -> Dict[str, str]:
             for subreddit in iterable:
                 if not subreddit:
                     continue
-                mapping[str(subreddit).lower()] = str(ideology)
+                key = _normalize_subreddit_name(str(subreddit))
+                if not key:
+                    continue
+                mapping[key] = str(ideology)
     return mapping

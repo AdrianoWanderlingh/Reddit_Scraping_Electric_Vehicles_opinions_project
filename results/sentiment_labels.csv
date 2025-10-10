@@ -1,0 +1,4 @@
+id,created_utc,subreddit,ideology_group,text,sent_vader_compound,sent_transformer_label,sent_transformer_score
+abc123,1759312922,AskALiberal,,"Electric vehicles are great
+
+EVs have long range and charging options. electric vehicle mandate",0.6249,positive,0.9984373450279236
