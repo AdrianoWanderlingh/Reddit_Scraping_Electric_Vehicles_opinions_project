@@ -22,7 +22,7 @@ LOGGER = logging.getLogger("evrepo.api")
 
 def _load_inputs(parquet_dir: Path, limit: int | None) -> pl.DataFrame:
     scan = pl.scan_parquet(str(parquet_dir / "**" / "*.parquet"), glob=True)
-    scan = scan.select(["id", "created_utc", "subreddit", "ideology_group", "text"])
+    scan = scan.select(["id", "created_utc", "subreddit", "ideology_group", "is_submission", "text"])
     if limit:
         scan = scan.head(limit)
     return scan.collect()
@@ -204,6 +204,8 @@ def run_stance_label(
             "created_utc": row.get("created_utc"),
             "subreddit": row.get("subreddit"),
             "ideology_group": row.get("ideology_group"),
+            "is_submission": row.get("is_submission"),
+            "record_type": "post" if bool(row.get("is_submission")) else "comment",
             "text": text_value,
             "subject_product_raw": subject_scores.raw.get("product"),
             "subject_product_norm": subject_scores.normalized.get("product"),
@@ -336,6 +338,8 @@ def run_sentiment(
                 "created_utc": row.get("created_utc"),
                 "subreddit": row.get("subreddit"),
                 "ideology_group": row.get("ideology_group"),
+                "is_submission": row.get("is_submission"),
+                "record_type": "post" if bool(row.get("is_submission")) else "comment",
                 "text": text_value,
                 "sent_vader_compound": sentiment.vader_compound,
                 "sent_transformer_label": sentiment.transformer_label,
