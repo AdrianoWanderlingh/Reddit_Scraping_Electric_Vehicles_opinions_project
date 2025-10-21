@@ -3,17 +3,17 @@ liberal:
   - r/progressive
   - r/democrats
   - r/environment
-  - r/Socialism
+  - r/socialism
   - r/DemocraticSocialism
-  - r/Enough_Sanders_spam
+  - r/Enough_Sanders_Spam
   - r/Feminism
   - r/TwoXChromosomes
   - r/LateStageCapitalism
-  - r/Climate
+  - r/climate
   - r/Futurology
   - r/WhitePeopleTwitter
   - r/AskALiberal
-  - r/liberal
+  - r/Liberal
 conservative:
   - r/Conservative
   - r/Republican
@@ -23,5 +23,5 @@ conservative:
   - r/JordanPeterson
   - r/Anarcho_Capitalism
   - r/AskThe_Donald
-  - r/AskConservative
-  - r/conservativeNews
+  - r/AskConservatives
+  - r/conservativenews

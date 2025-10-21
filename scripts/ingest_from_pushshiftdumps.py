@@ -325,6 +325,8 @@ def main() -> None:
     total_partitions_skipped = 0
     total_rows_written = 0
     total_raw_seen = 0
+    total_skipped_subreddit = 0
+    total_skipped_candidate = 0
 
     start_time = time.perf_counter()
 
@@ -455,12 +457,14 @@ def main() -> None:
             # Enforce subreddit filter per-record always (covers B monthly files)
             subreddit_name = _norm_sub(record.get("subreddit") or "")
             if subreddit_name not in include_subreddits:
+                total_skipped_subreddit += 1
                 continue
 
             text_val = record.get("text")
             if not text_val:
                 continue
             if not candidate_filter.is_candidate(text_val):
+                total_skipped_candidate += 1
                 continue
 
             year = record.get("year")
@@ -541,6 +545,9 @@ def main() -> None:
         total_rows_dedup_skipped,
         elapsed,
     )
+    if total_skipped_subreddit:
+        LOGGER.info("Rows skipped by subreddit whitelist: %d", total_skipped_subreddit)
+    LOGGER.info("Rows skipped by candidate filter: %d", total_skipped_candidate)
 
 
 if __name__ == "__main__":

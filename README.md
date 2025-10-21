@@ -17,13 +17,45 @@ Classify Reddit posts/comments into 9 categories (Pro/Against/Neutral – Produc
    The first run downloads dependencies and language models; later runs are faster.
 4. Download Pushshift dumps (`.zst`) into a folder you control, e.g.
    `"$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025"`.
-5. Outputs default to `"$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs"`.
+5. **Pre-split any `.zst` files larger than ~1 GiB** using the helper in `scripts/pre_split_pushshift_dir.py`
+   (details in the next section). This avoids multi-hour ingestion stalls and frees disk space by deleting
+   originals after splitting.
+6. Outputs default to `"$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs"`.
    You can override paths via CLI flags.
-6. Optional pre-flight check (verifies helpers, shows resolved config paths, layout, and `.zst` manifest):
+7. Optional pre-flight check (verifies helpers, shows resolved config paths, layout, and `.zst` manifest):
 
    ```bash
    python scripts/ingest_from_pushshiftdumps.py --in_dir "$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025" --print_config --log_level INFO
    ```
+
+---
+
+## Pre-splitting Large Pushshift Dumps
+
+Before running ingestion, split any monthly RC/RS archives larger than 1 GiB into manageable chunks. The script
+`scripts/pre_split_pushshift_dir.py` mirrors the `comments/` and `submissions/` layout, writes numbered chunk files,
+and (by default) removes each original `.zst` as soon as its chunks are created.
+
+```powershell
+$sourceRoot = "$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025"
+$splitRoot  = "$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025_split"
+
+# Split everything above 1 GiB, and deleting originals
+python scripts\split_pushshift_zst.py `
+  --input  $sourceRoot `
+  --output $splitRoot `
+  --records_per_chunk 4000000 `
+  --progress_interval 400000 `
+  --delete_input
+
+```
+
+Tips:
+
+- Use `--dry_run` to list the files that would be processed.
+- Pass `--delete_input` to delete the original dumps (without, memory size will double).
+- The generated files follow the pattern `RC_2025-01_chunk00001.zst`, so `ingest_from_pushshiftdumps.py` recognises
+  comments vs. submissions automatically.
 
 ---
 
@@ -32,6 +64,9 @@ Classify Reddit posts/comments into 9 categories (Pro/Against/Neutral – Produc
 You can run everything in one command or step-by-step.
 
 ### One-shot (all steps chained)
+
+> [!IMPORTANT]  
+> Expected run time higher than 9h.
 
 ```bash
 python scripts/run_pipeline.py --parquet_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\parquet_subset" --out_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results" --timeframe monthly --log_level INFO
@@ -53,6 +88,9 @@ Before ingestion, run a preflight to confirm that the paths, layout, and subredd
 python scripts/ingest_from_pushshiftdumps.py --in_dir "$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025" --print_config --log_level INFO
 ```
 
+> [!IMPORTANT]  
+> Expected run time higher than 5h.
+
 ##### Structure A (per-subreddit dumps, e.g. 2024)
 
 ```bash
@@ -61,7 +99,8 @@ python scripts/ingest_from_pushshiftdumps.py --in_dir "$env:USERPROFILE\Document
 
 ##### Structure B (monthly RC/RS dumps, e.g. 2025)
 
-The ingester automatically detects the RC_* (comments) and RS_* (submissions) files inside `comments/` and `submissions/`.
+Point `--in_dir` at the **split** directory produced by `pre_split_pushshift_dir.py`. The ingester automatically detects
+the RC_* (comments) and RS_* (submissions) chunk files inside `comments/` and `submissions/`.
 
 ```bash
 python scripts/ingest_from_pushshiftdumps.py --in_dir "$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025" --out_parquet_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\parquet_subset_2025" --start 2025-01-01 --end 2025-06-30 --mode both --log_level INFO
@@ -83,6 +122,9 @@ You can safely re-run ingestion—it appends only new IDs.
 
 Assigns stance using a natural language inference model (default: fast MNLI `prajjwal1/bert-tiny-mnli`).
 
+> [!IMPORTANT]  
+> Expected run time 30 mins.
+
 ```bash
 python scripts/label_stance.py --parquet_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\parquet_subset" --out_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\stance_labels.csv" --log_level INFO
 ```
@@ -101,6 +143,9 @@ Resumable: existing IDs in the CSV are skipped automatically.
 #### 3) Score sentiment
 
 Computes both VADER and transformer sentiment per record.
+
+> [!IMPORTANT]  
+> Expected run time 1h.
 
 ```bash
 python scripts/score_sentiment.py --parquet_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\parquet_subset" --out_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\sentiment_labels.csv" --log_level INFO
