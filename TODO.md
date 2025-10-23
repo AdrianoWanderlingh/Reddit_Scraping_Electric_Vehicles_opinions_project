@@ -1,4 +1,5 @@
 ﻿# TODO
+ - when there is already a stance_labels.csv the code does not run, it should print out a warning message and or save a new numbered version.
  - ingestion may benefit from some speedup in file opening, decompression and processing as implemented in 'scripts/split_pushshift_zst.py'
  - Calibrate thresholds in `config/labeling.yaml` after batching improvements.
  - Provide a setup step to pre-download models and eliminate first-run latency.

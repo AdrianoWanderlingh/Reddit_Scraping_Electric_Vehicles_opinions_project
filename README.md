@@ -149,7 +149,7 @@ Optional flags:
 
 `--templates full|lite|none` — control paraphrase ensembling (default: full).
 
-`--no_calibrate` — disable calibration (bias subtraction).
+`--no_calibrate` — disable calibration (bias subtraction), non reccomended.
 
 `--use_weak_rules` --rules_mode simple|full — enable weak-cue fusion.
 

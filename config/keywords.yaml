@@ -1,27 +1,44 @@
 product_core:
   - "\\bEVs?\\b"
-  - "\\belectric vehicle(s)?\\b"
-  - "\\belectric car(s)?\\b"
+  - "\\belectric\\s+(vehicles?|cars?)\\b"
   - "\\bBEVs?\\b"
   - "\\bPHEVs?\\b"
-  - "\\bplug[- ]?in hybrid(s)?\\b"
+  - "\\bplug[- ]?in\\s+hybrids?\\b"
+
 product_context:
-  - "battery"
-  - "charging|charger|fast charge|Supercharger"
-  - "kWh|range|home charger"
+  - "\\bbattery( pack| packs)?\\b|\\bBMS\\b"
+  - "\\b(kW|kWh|kW/h)\\b"         # (people misuse kW/h)
+  - "\\brange( anxiety)?\\b"
+  - "\\b(charging|charger|supercharg(ing|er)|level\\s*[12] chargers?)\\b"
+  - "\\bhome\\s+charger\\b|\\bDC\\s*fast\\s*charging\\b"
+  - "\\binfrastructure\\s+(for\\s+charging|of\\s+chargers)\\b"
 
 mandate:
-  - "mandate|ban(ned|ning)?|require(d|ment)?|phase[- ]?out|2035"
+  - "\\bmandate(d|s)?\\b|\\brequir(e|es|ed|ement)s?\\b"
+  - "\\bban(ned|ning|s)?\\b|\\bprohibit(ion|ed|s)?\\b"
+  - "\\bphase[- ]?out(s|ed)?\\b|\\bphase[- ]?down\\b"
+  - "\\bICE\\s+ban\\b|\\bpetrol\\b|\\bdiesel\\b.*\\bban\\b"
+  - "\\bZEV\\s+mandate\\b|\\bzero[- ]emission\\s+(vehicle|car)s?\\s+mandate\\b"
+  - "\\b(2030|2035|2040)\\b.*\\b(ICE|gas|petrol|diesel)\\b.*\\b(ban|phase[- ]?out)\\b"
 
 policy_non_mandate:
-  - "subsid(y|ies)|rebate|incentive|tax credit|CAFE|EPA|CARB|NHTSA|regulation|standard(s)?|ZEV|zero[- ]emission"
+  - "\\b(subsid(y|ies)|rebates?)\\b"
+  - "\\b(incentive|incentives)\\b"
+  - "\\btax\\s+credits?\\b|\\bIRA\\b|\\bInflation\\s+Reduction\\s+Act\\b"
+  - "\\bregistration\\s+fees?\\b|\\bEV\\s+fees?\\b"
+  - "\\b(mileage|road[- ]usage)\\s+(tax|charge|fee)s?\\b"
+  - "\\bcongestion\\s+charge\\b|\\bULEZ\\b"
+  - "\\b(carbon|emissions)\\s+tax\\b"
+  - "\\bCAFE\\b|\\bEPA\\b|\\bCARB\\b|\\bNHTSA\\b"
+  - "\\bZEV\\b(?!\\s+mandate)"
+  - "\\bgrid\\s+(investment|upgrade|infrastructure)\\b"
 
 pro_cues:
-  product: ["lower running cost","zero emission(s)","bought an EV","love my EV","quieter","less maintenance"]
-  mandate: ["necessary to meet climate goals","support the mandate","we need the ban"]
-  policy:  ["tax credit helps","policy works","subsidies accelerate adoption","standards are needed"]
+  product:  ["lower running cost","zero emission(s)","bought an EV","love my EV","quieter","less maintenance"]
+  mandate:  ["necessary to meet climate goals","support the mandate","we need the ban","phase-out is needed","require EV adoption"]
+  policy:   ["tax credit helps","policy works","subsidies accelerate adoption","standards are needed","rebates help","CAFE/EPA rules help"]
 
 anti_cues:
-  product: ["range anxiety","too expensive","battery fire","reliability issues","cobalt child labor"]
-  mandate: ["authoritarian mandate","government overreach","ban is wrong","forcing people"]
-  policy:  ["waste of taxpayers' money","policy failure","subsidies distort market"]
+  product:  ["range anxiety","too expensive","battery fire","reliability issues","cobalt child labor"]
+  mandate:  ["authoritarian mandate","government overreach","ban is wrong","forcing people","don't require","against the ban"]
+  policy:   ["waste of taxpayers' money","policy failure","subsidies distort market","mileage tax punishes drivers"]
