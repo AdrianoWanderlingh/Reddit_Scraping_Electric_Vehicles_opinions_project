@@ -36,14 +36,13 @@ def _normalize_subreddit_name(name: str) -> str:
     """Canonicalize subreddit names for lookups.
 
     - Strips leading "r/" or "/r/" if present.
-    - Lowercases the remainder.
     """
     s = (name or "").strip()
     if s.startswith("/r/"):
         s = s[3:]
     elif s.startswith("r/"):
         s = s[2:]
-    return s.lower()
+    return s
 
 
 def read_subreddit_map(path: str | Path) -> Dict[str, str]:

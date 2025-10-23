@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Split Pushshift .zst archives with improved performance."""
+"""Split Pushshift .zst archives with optional subreddit filtering."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -23,9 +24,40 @@ PUSHSHIFT_PERSONAL = ROOT / "tools" / "PushshiftDumps" / "personal"
 if str(PUSHSHIFT_PERSONAL) not in sys.path:
     sys.path.insert(0, str(PUSHSHIFT_PERSONAL))
 
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from evrepo.utils import read_subreddit_map  # noqa: E402
+
 NEWLINE = b"\n"
 OUTPUT_FLUSH_BYTES = 8 * 1024 * 1024  # flush writer every 8 MiB
-SIZE_THRESHOLD_BYTES = 1024 ** 2  # 1 GiB
+SIZE_THRESHOLD_BYTES = 1024 ** 3  # 1 GiB
+
+
+def load_subreddit_whitelist(yaml_path: Path) -> set[str]:
+    """Load subreddit names from YAML, returning strings."""
+    mapping = read_subreddit_map(str(yaml_path))
+    return {name.strip().lower() for name in mapping.keys() if name}
+
+
+def _split_worker(
+    input_path: str,
+    out_dir: str,
+    records_per_chunk: int,
+    progress_interval: int,
+    compression_level: int,
+    subreddit_whitelist: Optional[tuple[str, ...]],
+) -> Tuple[int, int, float, int, int]:
+    """Worker wrapper so multiprocessing can call split_file."""
+    whitelist_set = set(subreddit_whitelist) if subreddit_whitelist is not None else None
+    return split_file(
+        input_path=Path(input_path),
+        out_dir=Path(out_dir),
+        records_per_chunk=records_per_chunk,
+        progress_interval=progress_interval,
+        compression_level=compression_level,
+        subreddit_whitelist=whitelist_set,
+    )
+
 
 # ---- OPTIMIZED reading with byte buffer ----
 def iter_records_fast(path: Path, read_size: int = 2 ** 22) -> Iterator[bytes]:
@@ -82,13 +114,14 @@ def open_chunk_writer(base_prefix: str, chunk_index: int, out_dir: Path, compres
 def split_file(
     input_path: Path,
     out_dir: Path,
-    records_per_chunk: int = 24_000_000,
-    progress_interval: int = 8_000_000,
+    records_per_chunk: int = 8_000_000,
+    progress_interval: int = 2_000_000,
     compression_level: int = 3,
-) -> Tuple[int, int, float]:
+    subreddit_whitelist: Optional[set[str]] = None,
+) -> Tuple[int, int, float, int, int]:
     """Split *input_path* into chunked .zst files under *out_dir*.
 
-    Returns the number of **non-empty** output chunks created.
+    Returns (chunks_created, records_written, elapsed_seconds, total_seen, skipped_filter).
     """
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
@@ -98,7 +131,9 @@ def split_file(
 
     chunk_index = 0
     current_chunk_count = 0
-    total_count = 0
+    total_seen = 0
+    total_written = 0
+    skipped_filter = 0
 
     writer: Optional[zstd.ZstdCompressionWriter] = None
     current_path: Optional[Path] = None
@@ -107,6 +142,19 @@ def split_file(
 
     try:
         for line_bytes in iter_records_fast(input_path):
+            total_seen += 1
+
+            if subreddit_whitelist is not None:
+                try:
+                    record = json.loads(line_bytes.decode("utf-8"))
+                except Exception:
+                    skipped_filter += 1
+                    continue
+                subreddit = (record.get("subreddit") or "").strip().lower()
+                if subreddit not in subreddit_whitelist:
+                    skipped_filter += 1
+                    continue
+
             # Open the first (or next) chunk only when we have a record to write
             if writer is None:
                 chunk_index += 1
@@ -119,13 +167,18 @@ def split_file(
             out_buffer.append(NEWLINE[0])
 
             current_chunk_count += 1
-            total_count += 1
+            total_written += 1
             if len(out_buffer) >= OUTPUT_FLUSH_BYTES:
                 writer.write(out_buffer)
                 out_buffer.clear()
 
-            if progress_interval and total_count % progress_interval == 0:
-                logging.info("Processed %d records from %s", total_count, input_path.name)
+            if progress_interval and total_seen % progress_interval == 0:
+                logging.info(
+                    "Processed %d records from %s (written=%d)",
+                    total_seen,
+                    input_path.name,
+                    total_written,
+                )
 
             if current_chunk_count >= records_per_chunk:
                 if out_buffer:
@@ -146,16 +199,18 @@ def split_file(
 
     elapsed = time.perf_counter() - start_time
     logging.info(
-        "Split complete. Total records=%d, chunks_created=%d, elapsed=%.2fs, output_dir=%s",
-        total_count,
+        "Split complete. seen=%d written=%d skipped_filter=%d chunks=%d elapsed=%.2fs output_dir=%s",
+        total_seen,
+        total_written,
+        skipped_filter,
         chunk_index,
         elapsed,
         out_dir,
     )
-    if total_count > 0 and elapsed > 0:
-        rate = total_count / elapsed
+    if total_written > 0 and elapsed > 0:
+        rate = total_written / elapsed
         logging.info("Average throughput: %.2f records/s (%.3f ms/record)", rate, 1000.0 / rate)
-    return chunk_index, total_count, elapsed
+    return chunk_index, total_written, elapsed, total_seen, skipped_filter
 
 
 # ---- Directory mode helpers --------------------------------------------------
@@ -172,15 +227,22 @@ def process_directory(
     compression_level: int,
     delete_input: bool,
     dry_run: bool,
-) -> Tuple[int, int, int, int]:
-    """Mirror input_root under output_root and split each .zst sequentially."""
+    subreddit_whitelist: Optional[set[str]],
+    workers: int,
+) -> Tuple[int, int, int, int, int, int, int]:
+    """Mirror input_root under output_root and split each .zst sequentially or in parallel."""
     files = list(iter_zst_files(input_root))
     total = len(files)
     if total == 0:
         logging.info("No .zst files found under %s", input_root)
-        return (0, 0, 0, 0)
+        return (0, 0, 0, 0, 0, 0, 0)
 
     processed = skipped = errors = 0
+    total_written = total_seen = total_skipped_filter = 0
+    tasks: list[tuple[str, str, int, int, int, Optional[tuple[str, ...]]]] = []
+    whitelist_tuple: Optional[tuple[str, ...]] = (
+        tuple(sorted(subreddit_whitelist)) if subreddit_whitelist else None
+    )
 
     for idx, src in enumerate(files, 1):
         if not src.is_file():
@@ -202,44 +264,89 @@ def process_directory(
 
         rel = src.relative_to(input_root)
         out_dir = output_root / rel.parent
-        base_prefix = src.stem
-
-        logging.info("[start  %d/%d] %s -> %s (prefix=%s, size=%.2f GiB)",
-                     idx, total, src, out_dir, base_prefix, size / (1024 ** 3))
+        logging.info("[start  %d/%d] %s -> %s (size=%.2f GiB)",
+                     idx, total, src, out_dir, size / (1024 ** 3))
 
         if dry_run:
             logging.info("[dry-run] would split: %s", src)
             processed += 1
             continue
 
-        try:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            chunks_created, records_processed, elapsed = split_file(
-                input_path=src,
-                out_dir=out_dir,
-                records_per_chunk=records_per_chunk,
-                progress_interval=progress_interval,
-                compression_level=compression_level,
+        out_dir.mkdir(parents=True, exist_ok=True)
+        tasks.append(
+            (
+                str(src),
+                str(out_dir),
+                records_per_chunk,
+                progress_interval,
+                compression_level,
+                whitelist_tuple,
             )
-            logging.info("[done   %d/%d] %s (chunks_created=%d, records=%d, elapsed=%.2fs)",
-                         idx, total, src, chunks_created, records_processed, elapsed)
+        )
 
-            if delete_input and records_processed > 0:
+    if not tasks:
+        return (processed, skipped, errors, total, total_written, total_seen, total_skipped_filter)
+
+    worker_count = max(1, min(workers, len(tasks)))
+
+    if worker_count == 1:
+        for params in tasks:
+            src_path = Path(params[0])
+            try:
+                chunks_created, records_written, elapsed, seen, skipped_filter = _split_worker(*params)
+                logging.info("[done] %s (chunks=%d, records=%d, elapsed=%.2fs)",
+                             src_path, chunks_created, records_written, elapsed)
+                total_written += records_written
+                total_seen += seen
+                total_skipped_filter += skipped_filter
+                processed += 1
+                if delete_input and records_written > 0:
+                    try:
+                        os.unlink(src_path)
+                        logging.info("Deleted source: %s", src_path)
+                    except OSError as exc:
+                        logging.error("Failed to delete %s: %s", src_path, exc)
+            except Exception as exc:
+                errors += 1
+                logging.exception("[error] Failed on %s: %s", src_path, exc)
+    else:
+        logging.info("Using %d parallel workers", worker_count)
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            future_map = {
+                executor.submit(_split_worker, *params): params for params in tasks
+            }
+            for future in as_completed(future_map):
+                params = future_map[future]
+                src_path = Path(params[0])
                 try:
-                    os.unlink(src)
-                    logging.info("Deleted source: %s", src)
-                except OSError as e:
-                    logging.error("Failed to delete %s: %s", src, e)
+                    chunks_created, records_written, elapsed, seen, skipped_filter = future.result()
+                    logging.info("[done] %s (chunks=%d, records=%d, elapsed=%.2fs)",
+                                 src_path, chunks_created, records_written, elapsed)
+                    total_written += records_written
+                    total_seen += seen
+                    total_skipped_filter += skipped_filter
+                    processed += 1
+                    if delete_input and records_written > 0:
+                        try:
+                            os.unlink(src_path)
+                            logging.info("Deleted source: %s", src_path)
+                        except OSError as exc:
+                            logging.error("Failed to delete %s: %s", src_path, exc)
+                except Exception as exc:
+                    errors += 1
+                    logging.exception("[error] Failed on %s: %s", src_path, exc)
 
-            processed += 1
-
-        except Exception as e:
-            errors += 1
-            logging.exception("[error  %d/%d] Failed on %s: %s", idx, total, src, e)
-
-    logging.info("Completed directory split. processed=%d skipped=%d errors=%d total=%d",
-                 processed, skipped, errors, total)
-    return (processed, skipped, errors, total)
+    logging.info(
+        "Completed directory split. processed=%d skipped=%d errors=%d total=%d written=%d seen=%d skipped_filter=%d",
+        processed,
+        skipped,
+        errors,
+        total,
+        total_written,
+        total_seen,
+        total_skipped_filter,
+    )
+    return (processed, skipped, errors, total, total_written, total_seen, total_skipped_filter)
 
 
 # ---- Unified CLI -------------------------------------------------------------
@@ -252,16 +359,22 @@ def main() -> None:
                         help="Path to a single .zst file OR a directory containing .zst files")
     parser.add_argument("--output", required=True,
                         help="Output directory for chunks")
-    parser.add_argument("--records_per_chunk", type=int, default=2_000_000,
-                        help="Maximum records per chunk (default: 2,000,000)")
-    parser.add_argument("--progress_interval", type=int, default=200_000,
-                        help="Log progress every N records (default: 200,000)")
+    parser.add_argument("--records_per_chunk", type=int, default=8_000_000,
+                        help="Maximum records per chunk (default: 8,000,000)")
+    parser.add_argument("--progress_interval", type=int, default=2_000_000,
+                        help="Log progress every N records (default: 2,000,000)")
     parser.add_argument("--compression_level", type=int, default=3,
-                        help="Zstd compression level: 3 is the source dafault")
+                        help="Zstd compression level: 3 is the source default")
     parser.add_argument("--delete_input", action="store_true",
                         help="Delete original files after successful split")
     parser.add_argument("--dry_run", action="store_true",
                         help="Preview what would be processed without making changes")
+    parser.add_argument("--workers", type=int, default=os.cpu_count() or 1,
+                        help="Number of parallel workers (default: number of CPU cores)")
+    parser.add_argument("--subreddit_yaml", default="config/subreddits.yaml",
+                        help="Path to subreddit whitelist YAML (default: config/subreddits.yaml)")
+    parser.add_argument("--no_subreddit_filter", action="store_true",
+                        help="Disable subreddit filtering and keep all records")
     parser.add_argument("--log_level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 
@@ -281,6 +394,21 @@ def main() -> None:
         except ValueError:
             pass
 
+    subreddit_whitelist: Optional[set[str]] = None
+    if not args.no_subreddit_filter and args.subreddit_yaml:
+        yaml_path = Path(args.subreddit_yaml)
+        if not yaml_path.is_absolute():
+            yaml_path = ROOT / yaml_path
+        if not yaml_path.exists():
+            raise FileNotFoundError(f"Subreddit YAML not found: {yaml_path}")
+        subreddit_whitelist = load_subreddit_whitelist(yaml_path)
+        if subreddit_whitelist:
+            logging.info("Loaded %d whitelisted subreddits from %s", len(subreddit_whitelist), yaml_path)
+        else:
+            logging.warning("Whitelist %s produced zero entries; no rows will be written", yaml_path)
+    else:
+        logging.info("Subreddit filtering disabled; all records will be retained")
+
     if input_path.is_file():
         if not input_path.name.endswith(".zst"):
             raise ValueError(f"--input file must end with .zst, got: {input_path}")
@@ -298,30 +426,39 @@ def main() -> None:
             logging.info("[dry-run] would split: %s (%.2f GiB)", input_path, size / (1024 ** 3))
             return
 
-        chunks_created, records_processed, elapsed = split_file(
+        (
+            chunks_created,
+            records_written,
+            elapsed,
+            seen,
+            skipped_filter,
+        ) = split_file(
             input_path=input_path,
             out_dir=output_path,
             records_per_chunk=args.records_per_chunk,
             progress_interval=args.progress_interval,
             compression_level=args.compression_level,
+            subreddit_whitelist=subreddit_whitelist,
         )
-        if args.delete_input and records_processed > 0:
+        if args.delete_input and records_written > 0:
             try:
                 input_path.unlink()
                 logging.info("Deleted source: %s", input_path)
             except OSError as e:
                 logging.error("Failed to delete %s: %s", input_path, e)
         logging.info(
-            "Finished splitting %s (chunks=%d, records=%d, elapsed=%.2fs)",
+            "Finished splitting %s (chunks=%d, written=%d, seen=%d, skipped_filter=%d, elapsed=%.2fs)",
             input_path.name,
             chunks_created,
-            records_processed,
+            records_written,
+            seen,
+            skipped_filter,
             elapsed,
         )
         return
 
     # Directory mode
-    processed, skipped, errors, total = process_directory(
+    processed, skipped, errors, total_files, total_written, total_seen, total_skipped_filter = process_directory(
         input_root=input_path,
         output_root=output_path,
         records_per_chunk=args.records_per_chunk,
@@ -329,8 +466,19 @@ def main() -> None:
         compression_level=args.compression_level,
         delete_input=args.delete_input,
         dry_run=args.dry_run,
+        subreddit_whitelist=subreddit_whitelist,
+        workers=args.workers,
     )
-    logging.info("Summary: processed=%d skipped=%d errors=%d total=%d", processed, skipped, errors, total)
+    logging.info(
+        "Summary: processed=%d skipped=%d errors=%d total_files=%d total_written=%d total_seen=%d total_skipped_filter=%d",
+        processed,
+        skipped,
+        errors,
+        total_files,
+        total_written,
+        total_seen,
+        total_skipped_filter,
+    )
 
 
 if __name__ == "__main__":

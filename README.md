@@ -30,30 +30,30 @@ Classify Reddit posts/comments into 9 categories (Pro/Against/Neutral – Produc
 
 ---
 
-## Pre-splitting Large Pushshift Dumps
+## Pre-splitting and filtering Large Pushshift Dumps
 
-Before running ingestion, split any monthly RC/RS archives larger than 1 GiB into manageable chunks. The script
-`scripts/pre_split_pushshift_dir.py` mirrors the `comments/` and `submissions/` layout, writes numbered chunk files,
-and (by default) removes each original `.zst` as soon as its chunks are created.
+Before running ingestion, filter out only the subreddits.yaml files, and split any monthly RC/RS archives larger than 1 GiB into manageable chunks. The script `scripts/split_pushshift_zst.py` mirrors the `comments/` and `submissions/` layout, writes numbered chunk files, and (by default) removes each original `.zst` as soon as its chunks are created.
 
 ```powershell
 $sourceRoot = "$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025"
 $splitRoot  = "$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025_split"
 
-# Split everything above 1 GiB, and deleting originals
+# Split everything above 1 GiB, delete originals, keep only whitelisted subreddits
 python scripts\split_pushshift_zst.py `
   --input  $sourceRoot `
   --output $splitRoot `
-  --records_per_chunk 4000000 `
-  --progress_interval 400000 `
-  --delete_input
-
+  --records_per_chunk 8000000 `
+  --progress_interval 100000 `
+  --delete_input `
+  --subreddit_yaml config/subreddits.yaml
 ```
 
 Tips:
 
 - Use `--dry_run` to list the files that would be processed.
 - Pass `--delete_input` to delete the original dumps (without, memory size will double).
+- By default, only rows whose `subreddit` matches the whitelist defined in `config/subreddits.yaml` are retained.
+  Pass `--no_subreddit_filter` to keep everything.
 - The generated files follow the pattern `RC_2025-01_chunk00001.zst`, so `ingest_from_pushshiftdumps.py` recognises
   comments vs. submissions automatically.
 
@@ -99,7 +99,7 @@ python scripts/ingest_from_pushshiftdumps.py --in_dir "$env:USERPROFILE\Document
 
 ##### Structure B (monthly RC/RS dumps, e.g. 2025)
 
-Point `--in_dir` at the **split** directory produced by `pre_split_pushshift_dir.py`. The ingester automatically detects
+Point `--in_dir` at the **split** directory produced by `split_pushshift_dir.py`. The ingester automatically detects
 the RC_* (comments) and RS_* (submissions) chunk files inside `comments/` and `submissions/`.
 
 ```bash
