@@ -94,6 +94,8 @@ def run_stance_label(
     fast_model: bool = True,
     backend: str = "torch",
     batch_size: int = 32,
+    calibrate: bool = True,
+    templates: str = "full",
     verify: bool = False,
     resume: bool = True,
     overwrite: bool = False,
@@ -117,7 +119,11 @@ def run_stance_label(
 
     subject_scorer = SubjectScorer(keyword_cfg)
     weak_scorer = WeakRuleScorer(keyword_cfg, mode=rules_mode) if use_weak_rules else None
-    nli_scorer = ZeroShotScorer(fast_model=fast_model, backend=backend)
+    nli_scorer = ZeroShotScorer(
+        fast_model=fast_model,
+        backend=backend,
+        calibrate=calibrate
+    )
     fuser = LabelFuser(labeling_cfg.get("fusion"), labeling_cfg.get("subject_tie_break_priority", []))
 
     start_time = time.perf_counter()
@@ -186,7 +192,7 @@ def run_stance_label(
             logger.debug(
                 "Row id=%s nli_scores=%s",
                 row.get("id"),
-                {k: vars(v) for k, v in nli_row.items()},
+  +             {k: {"pro": v.pro, "anti": v.anti} for k, v in nli_row.items()},
             )
             logger.debug(
                 "Row id=%s decision subject=%s stance=%s fused_pro=%.4f fused_anti=%.4f confidence=%.4f",

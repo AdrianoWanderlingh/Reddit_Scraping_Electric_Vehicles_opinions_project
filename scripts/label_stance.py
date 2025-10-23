@@ -20,6 +20,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--large_model", action="store_true", help="Use the larger MNLI model (default: fast tiny model)")
     parser.add_argument("--backend", choices=["torch", "onnx"], default="torch")
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--templates", choices=["full", "lite", "none"], default="full",
+                        help="Paraphrase ensemble size for MNLI hypotheses.")
+    parser.add_argument("--no_calibrate", action="store_true",
+                        help="Disable MNLI contextual calibration (bias subtraction).")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output CSV instead of resuming")
     parser.add_argument("--no_resume", action="store_true", help="Do not skip existing IDs if output CSV exists")
@@ -40,6 +44,8 @@ def main() -> None:
         fast_model=(not args.large_model),
         backend=args.backend,
         batch_size=args.batch_size,
+        calibrate=(not args.no_calibrate),
+        templates=args.templates,
         verify=args.verify,
         resume=(not args.no_resume),
         overwrite=args.overwrite,

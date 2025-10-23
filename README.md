@@ -1,6 +1,6 @@
-# EV Stance Reddit
+# Social Media Scraping - Electric Vehicles Stance
 
-Classify Reddit posts/comments into 9 categories (Pro/Against/Neutral – Product/Mandate/Policy) by ideology (liberal vs conservative), run sentiment, generate trends and distinctive n-grams, and export final CSV + per-category samples.
+Parsing and Classifying Reddit posts and comments from selected liberal and conservative subreddits to analyze discussions about electric vehicles (EVs) in the US. Classifcation into 9 categories (Pro/Against/Neutral – Product/Mandate/Policy) by ideology (liberal vs conservative), running sentiment analysis, generating trends and n-grams, and exporting final dataset and per-category samples as CSVs.
 
 ---
 
@@ -29,6 +29,11 @@ Classify Reddit posts/comments into 9 categories (Pro/Against/Neutral – Produc
    ```
 
 ---
+
+Actionable checks before long runs
+- Ensure `tools/PushshiftDumps` exists and `personal/utils.py` provides `read_obj_zst`.
+- Verify `config/subreddits.yaml` covers your targeted subreddits; missing subs will show `ideology_group=None`.
+- Start with a narrow timeframe/subreddit ingest (even if files cover all time) to validate the end‑to‑end pipeline and output locations.
 
 ## Pre-splitting and filtering Large Pushshift Dumps
 
@@ -89,7 +94,9 @@ python scripts/ingest_from_pushshiftdumps.py --in_dir "$env:USERPROFILE\Download
 ```
 
 > [!IMPORTANT]  
+> Data will be filtered according to the secified subreddits and according to the specified filtering keywords (`keywords.yaml`). The keywords have been chosen as EV “product” core terms and context terms (e.g., electric vehicle, EV, BEV, PHEV; batteries/charging/range), mandate terms (e.g., mandate/ban/require), and non‑mandate policy terms (e.g., subsidies/tax credits/standards). A text passes when it contains product core phrases and does not match any negative filters.
 > Expected run time higher than 5h.
+
 
 ##### Structure A (per-subreddit dumps, e.g. 2024)
 
@@ -103,7 +110,7 @@ Point `--in_dir` at the **split** directory produced by `split_pushshift_dir.py`
 the RC_* (comments) and RS_* (submissions) chunk files inside `comments/` and `submissions/`.
 
 ```bash
-python scripts/ingest_from_pushshiftdumps.py --in_dir "$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025" --out_parquet_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\parquet_subset_2025" --start 2025-01-01 --end 2025-06-30 --mode both --log_level INFO
+python scripts/ingest_from_pushshiftdumps.py --in_dir "$env:USERPROFILE\Downloads\reddit_pushshift_dump_2025" --out_parquet_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\parquet_subset" --start 2025-01-01 --end 2025-06-30 --mode both --log_level INFO
 ```
 
 By default, the script enforces the subreddit whitelist defined in `config/subreddits.yaml`.
@@ -114,30 +121,61 @@ python scripts/ingest_from_pushshiftdumps.py --in_dir "$env:USERPROFILE\Download
 ```
 
 Each Parquet record includes `is_submission` (True for submissions, False for comments).
-You can safely re-run ingestion—it appends only new IDs.
+You can safely re-run ingestion — it appends only new IDs.
 
 ---
 
 #### 2) Label stances
 
-Assigns stance using a natural language inference model (default: fast MNLI `prajjwal1/bert-tiny-mnli`).
+Assigns stance using a natural language inference model (default: fast MNLI `prajjwal1/bert-tiny-mnli`), with:
+- **3-way softmax** (neutral mass preserved)
+- **Contextual calibration** (null-prompt bias subtraction)
+- **Template ensembling** (multiple symmetric paraphrases per class)
 
 > [!IMPORTANT]  
-> Expected run time 30 mins.
+> Expected run time 30-90 mins. Use --limit for smoke tests.
 
+**Typical run (fast, calibrated, full templates):**
 ```bash
-python scripts/label_stance.py --parquet_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\parquet_subset" --out_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\stance_labels.csv" --log_level INFO
-```
+python scripts/label_stance.py `
+  --parquet_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\parquet_subset" `
+  --out_csv     "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\stance_labels.csv" `
+  --batch_size 32 --log_level INFO
+  ```
 
 Optional flags:
 
-* `--large_model`: use a larger MNLI model.
-* `--use_weak_rules --rules_mode simple|full`: enable experimental weak-cue fusion.
-* `--limit`: process a quick subset.
-* `--overwrite` / `--no_resume`: control resumable behavior.
+`--large_model` — use the larger MNLI model (defaults to small).
+
+`--templates full|lite|none` — control paraphrase ensembling (default: full).
+
+`--no_calibrate` — disable calibration (bias subtraction).
+
+`--use_weak_rules` --rules_mode simple|full — enable weak-cue fusion.
+
+`--limit` — process a quick subset.
+
+`--overwrite` / `--no_resume` — control resumable behavior.
+
+`--verify` — spot-check single-vs-batch MNLI on a few rows (debug logging).
+
+Environment overrides (optional):
+
+`EVREPO_FAST_NLI_MODEL` — replace the default fast model.
+
+`EVREPO_NLI_MODEL` — replace the default large model.
+
+Performance note: full template ensembling (~3× hypothesis pairs) increases runtime.
+
+With `prajjwal1/bert-tiny-mnli` on CPU:
+
+`--templates full`: ~30–90 min for a medium subset.
+
+`--templates lite`: ~2× speedup with minor quality loss.
+
+`--templates none`: fastest; use for smoke tests.
 
 Resumable: existing IDs in the CSV are skipped automatically.
-
 ---
 
 #### 3) Score sentiment
@@ -253,7 +291,7 @@ python scripts/run_analysis.py --help
 It downloads pretrained language models (hundreds of MB). Later runs use cached copies.
 
 **Where is my output?**
-Inside your `results/` folder (stance/sentiment CSVs and plots) and your Parquet output folder (`parquet_subset*`) for ingested data.
+Inside your `results/` folder (stance/sentiment CSVs and plots) and your Parquet output folder (`parquet_subset`) for ingested data.
 
 **How are subreddits enforced?**
 All ingestion runs automatically use the whitelist defined in `config/subreddits.yaml`.

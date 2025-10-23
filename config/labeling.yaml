@@ -1,5 +1,9 @@
 fusion:
-  weak_weight: 0.4
-  nli_weight: 0.6
-  neutral_threshold: 0.55
+  # Give a little more trust to the (now less-biased) NLI scores.
+  weak_weight: 0.30
+  nli_weight: 0.70
+
+  # If your fuser uses a single "neutral_threshold" on the fused max(pro, anti),
+  # lower it so you don't over-call neutral under 3-way softmax.
+  neutral_threshold: 0.45
 subject_tie_break_priority: ["mandate","product","policy"]
