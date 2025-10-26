@@ -198,8 +198,9 @@ Resumable: existing IDs in the output CSV are skipped.
 Generates an output html with plots.
 
 ```bash
-python scripts/analyze_ev.py --stance_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\stance_labels.csv" --sentiment_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\sentiment_labels.csv" --out_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\analysis_subset" --timeframe monthly
+python scripts/analyze_ev.py --stance_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\stance_labels.csv" --sentiment_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\sentiment_labels.csv" --out_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\analysis_subset" --export_samples
 ```
+`--export_samples` produces an optional export that writes the merged stance+sentiment CSV plus per-final_category samples (≤30 rows each).
 
 ---
 
