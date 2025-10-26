@@ -2,26 +2,70 @@
 from __future__ import annotations
 
 r"""
-Analyze EV opinions: stance × ideology comparisons, sentiment stats, content analysis, and plots.
+Comprehensive EV opinions analysis: Essential Core Plots + Advanced Analytics + Diagnostics.
 
-pip install pandas numpy scikit-learn matplotlib
+Includes:
+- Stance distribution by ideology (stacked bars per subject)
+- Temporal evolution (time series by ideology × stance)
+- Subject classification flow (Sankey diagram)
+- Confidence distributions (violin plots)
+- Sentiment vs Stance scatter (VADER + Transformer)
+- Subreddit-level heatmap
+- Engagement/score analysis
+- Classification diagnostics
 
-python scripts/analyze_ev.py --stance_csv "C:\Users\awand\Documents\Reddit_EV_data_and_outputs\results\stance_labels.csv" --sentiment_csv "C:\Users\awand\Documents\Reddit_EV_data_and_outputs\results\sentiment_labels.csv" --out_dir "C:\Users\awand\Documents\Reddit_EV_data_and_outputs\results\analysis_out" --confidence_min 0.01 --min_docs_terms 30 --n_terms 20 --extra_stopwords "amp,im,don,t" --min_n_sentiment 10
+pip install pandas numpy scikit-learn matplotlib seaborn plotly
 
+python scripts/analyze_ev_enhanced.py \
+    --stance_csv "path/to/stance_labels.csv" \
+    --sentiment_csv "path/to/sentiment_labels.csv" \
+    --out_dir "path/to/analysis_out" \
+    --confidence_min 0.01
 """
-
 
 import argparse
 import os
-import json
 import re
 import math
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Dict, List, Tuple
+from collections import defaultdict
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.feature_extraction.text import TfidfVectorizer
+from matplotlib import cm
+from matplotlib.patches import Patch
+
+try:
+    import seaborn as sns
+    HAVE_SEABORN = True
+except ImportError:  # pragma: no cover - fallback for lightweight environments
+    sns = None
+    HAVE_SEABORN = False
+    print("[WARN] seaborn not available; using matplotlib fallbacks. Install via 'pip install seaborn'.")
+
+# Try plotly for Sankey; graceful fallback if missing
+try:
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    print("[WARN] plotly not available; Sankey diagram will be skipped.")
+
+# -------------------------
+# Style setup
+# -------------------------
+plt.rcParams.update({
+    "figure.autolayout": True,
+    "figure.dpi": 100,
+    "savefig.dpi": 200,
+    "font.size": 10,
+})
+if HAVE_SEABORN:
+    sns.set_palette("Set2")
+else:
+    plt.rcParams["axes.prop_cycle"] = plt.cycler(color=cm.get_cmap("Set2").colors)
 
 # -------------------------
 # Robust column detection
@@ -29,405 +73,798 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 POSSIBLE_ID_COLUMNS = ["id", "item_id", "reddit_id", "post_id", "comment_id"]
 POSSIBLE_TEXT_COLUMNS = ["body", "selftext", "title", "text", "content"]
 POSSIBLE_CREATED_COLUMNS = ["created_utc", "created_ts", "created"]
+POSSIBLE_SCORE_COLUMNS = ["score", "ups", "upvotes"]
+POSSIBLE_SUBREDDIT_COLUMNS = ["subreddit", "sub", "community"]
 
-def find_id_column(df: pd.DataFrame) -> str:
-    for c in POSSIBLE_ID_COLUMNS:
-        if c in df.columns:
-            return c
-    raise KeyError(f"No ID column found. Tried {POSSIBLE_ID_COLUMNS}. Available: {list(df.columns)}")
-
-def find_text_column(df: pd.DataFrame) -> Optional[str]:
-    for c in POSSIBLE_TEXT_COLUMNS:
+def find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for c in candidates:
         if c in df.columns:
             return c
     return None
 
-def find_created_column(df: pd.DataFrame) -> Optional[str]:
-    for c in POSSIBLE_CREATED_COLUMNS:
-        if c in df.columns:
-            return c
-    return None
+def require_id_column(df: pd.DataFrame) -> str:
+    col = find_column(df, POSSIBLE_ID_COLUMNS)
+    if col is None:
+        raise KeyError(f"No ID column found. Tried {POSSIBLE_ID_COLUMNS}. Available: {list(df.columns)}")
+    return col
 
 # -------------------------
-# IO + merge (VADER sentiment; ideology filled from either file)
+# IO + merge
 # -------------------------
-def load_frames(stance_csv: str, sentiment_csv: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Load stance & sentiment CSVs, return (merged, stance_df, sent_df).
-
-    Required columns per your examples:
-      sentiment: id, sent_vader_compound, [ideology_group, subreddit, text, created_utc...]
-      stance:    id, final_category, ideology_group (and confidence), [subreddit, text, created_utc...]
-    """
+def load_frames(stance_csv: str, sentiment_csv: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load and merge stance + sentiment CSVs with robust parsing."""
     stance = pd.read_csv(stance_csv)
     sent = pd.read_csv(sentiment_csv)
 
-    id_col_stance = find_id_column(stance)
-    id_col_sent = find_id_column(sent)
-    stance = stance.rename(columns={id_col_stance: "id"})
-    sent = sent.rename(columns={id_col_sent: "id"})
+    # Normalize IDs
+    stance = stance.rename(columns={require_id_column(stance): "id"})
+    sent   = sent.rename(columns={require_id_column(sent): "id"})
 
-    # Normalize ideology in BOTH frames (keep NaNs as NaN; .str preserves NaN)
-    if "ideology_group" in stance.columns:
-        stance["ideology_group"] = stance["ideology_group"].str.strip().str.lower()
-    if "ideology_group" in sent.columns:
-        sent["ideology_group"] = sent["ideology_group"].str.strip().str.lower()
+    # Normalize ideology in both
+    for df in (stance, sent):
+        if "ideology_group" in df.columns:
+            df["ideology_group"] = df["ideology_group"].astype(str).str.strip().str.lower()
 
-    # Build numeric sentiment from VADER
+    # Sentiment fields
     if "sent_vader_compound" not in sent.columns:
-        raise KeyError("sentiment_labels.csv must include 'sent_vader_compound' for VADER-based analysis.")
-    sent["sentiment_score"] = pd.to_numeric(sent["sent_vader_compound"], errors="coerce")
+        raise KeyError("sentiment_labels.csv must include 'sent_vader_compound'")
+    sent["sentiment_vader"] = pd.to_numeric(sent["sent_vader_compound"], errors="coerce")
 
-    # Merge AND bring ideology from both sides; then coalesce
-    keep_cols = ["id", "sentiment_score", "sent_vader_compound"]
+    if "sent_transformer_label" in sent.columns:
+        sent["sentiment_transformer_label"] = sent["sent_transformer_label"].astype(str).str.lower()
+    if "sent_transformer_score" in sent.columns:
+        sent["sentiment_transformer_score"] = pd.to_numeric(sent["sent_transformer_score"], errors="coerce")
+
+    # Merge
+    keep_cols = ["id", "sentiment_vader"]
     if "ideology_group" in sent.columns:
         sent = sent.rename(columns={"ideology_group": "ideology_group_sent"})
         keep_cols.append("ideology_group_sent")
+    if "sentiment_transformer_label" in sent.columns:
+        keep_cols.append("sentiment_transformer_label")
+    if "sentiment_transformer_score" in sent.columns:
+        keep_cols.append("sentiment_transformer_score")
 
     merged = stance.merge(sent[[c for c in keep_cols if c in sent.columns]], on="id", how="left")
 
+    # Coalesce ideology
     if "ideology_group" not in merged.columns and "ideology_group_sent" in merged.columns:
         merged = merged.rename(columns={"ideology_group_sent": "ideology_group"})
     elif "ideology_group" in merged.columns and "ideology_group_sent" in merged.columns:
-        # fill missing stance ideology from sentiment
         merged["ideology_group"] = merged["ideology_group"].fillna(merged["ideology_group_sent"])
         merged = merged.drop(columns=["ideology_group_sent"])
 
-    # Required columns
-    for col in ["final_category", "ideology_group"]:
-        if col not in merged.columns:
-            raise KeyError(f"Missing required column '{col}' in the merged data.")
+    # Derive subject & stance — prefer explicit columns if present
+    if "final_subject" in merged.columns:
+        merged["subject"] = merged["final_subject"].astype(str).str.strip().str.lower()
+    else:
+        # Fallback: try to parse from final_category like "Pro-EV (product)"
+        if "final_category" in merged.columns:
+            merged["subject"] = merged["final_category"].str.extract(r"\((product|mandate|policy)\)", expand=False).str.lower()
+        else:
+            merged["subject"] = np.nan
+
+    if "final_stance" in merged.columns:
+        merged["stance"] = merged["final_stance"].astype(str).str.strip().str.lower()
+    else:
+        # Fallback: parse from strings like "Pro-EV", "Against-EV", "Neutral-EV"
+        if "final_category" in merged.columns:
+            merged["stance"] = (
+                merged["final_category"]
+                .str.extract(r"^(Pro|Against|Neutral)", expand=False)
+                .str.lower()
+                .replace({"pro": "pro", "against": "anti", "neutral": "neutral"})
+            )
+        else:
+            merged["stance"] = np.nan
+
+    # Parse created_utc for temporal analysis
+    created_col = find_column(merged, POSSIBLE_CREATED_COLUMNS)
+    if created_col:
+        merged["created_utc"] = pd.to_numeric(merged[created_col], errors="coerce")
+        merged["datetime"] = pd.to_datetime(merged["created_utc"], unit="s", errors="coerce")
+        merged["year_month"] = merged["datetime"].dt.to_period("M")
+
+    # Score column for engagement analysis
+    score_col = find_column(merged, POSSIBLE_SCORE_COLUMNS)
+    if score_col and score_col != "score":
+        merged = merged.rename(columns={score_col: "score"})
+    if "score" in merged.columns:
+        merged["score"] = pd.to_numeric(merged["score"], errors="coerce")
+
+    # Subreddit column
+    sub_col = find_column(merged, POSSIBLE_SUBREDDIT_COLUMNS)
+    if sub_col and sub_col != "subreddit":
+        merged = merged.rename(columns={sub_col: "subreddit"})
+
+    # Confidence to numeric
+    if "confidence" in merged.columns:
+        merged["confidence"] = pd.to_numeric(merged["confidence"], errors="coerce")
+
+    # Derive subject-specific NLI scores into generic columns for diagnostics
+    subject_to_cols = {
+        "product": ("nli_product_pro", "nli_product_anti"),
+        "mandate": ("nli_mandate_pro", "nli_mandate_anti"),
+        "policy":  ("nli_policy_pro",  "nli_policy_anti"),
+    }
+    merged["nli_pro"] = np.nan
+    merged["nli_anti"] = np.nan
+    if any(col in merged.columns for cols in subject_to_cols.values() for col in cols):
+        for subj, (pro_col, anti_col) in subject_to_cols.items():
+            mask = merged["subject"].eq(subj)
+            if pro_col in merged.columns:
+                merged.loc[mask, "nli_pro"] = pd.to_numeric(merged.loc[mask, pro_col], errors="coerce")
+            if anti_col in merged.columns:
+                merged.loc[mask, "nli_anti"] = pd.to_numeric(merged.loc[mask, anti_col], errors="coerce")
+
+    # Keep only valid subjects/stances
+    merged.loc[~merged["subject"].isin(["product", "mandate", "policy"]), "subject"] = np.nan
+    merged.loc[~merged["stance"].isin(["pro", "anti", "neutral"]), "stance"] = np.nan
 
     return merged, stance, sent
 
 # -------------------------
-# Sentiment summaries
+# Utility functions
 # -------------------------
-def _ci95(mean: float, std: float, n: int) -> tuple[float, float]:
-    if n <= 1 or (isinstance(std, float) and math.isnan(std)):
+def safe_name(s: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", s)
+
+def _ci95(mean: float, std: float, n: int) -> Tuple[float, float]:
+    if n <= 1 or pd.isna(std):
         return (np.nan, np.nan)
     se = std / math.sqrt(n)
     return mean - 1.96 * se, mean + 1.96 * se
 
-def summarize_sentiment_continuous(df: pd.DataFrame, min_n: int = 10) -> pd.DataFrame:
-    """Continuous mean/std/CI on sentiment_score (VADER in [-1,1])."""
-    gb = df.groupby(["final_category", "ideology_group"])["sentiment_score"]
-    stats = gb.agg(["count", "mean", "std"]).reset_index()
-    stats = stats.rename(columns={"count": "n", "mean": "sent_mean", "std": "sent_std"})
-    cis = stats.apply(lambda r: _ci95(r["sent_mean"], r["sent_std"], int(r["n"])), axis=1)
-    stats["ci_low"] = [c[0] for c in cis]
-    stats["ci_high"] = [c[1] for c in cis]
-    stats["keep"] = stats["n"] >= min_n
-    return stats.sort_values(["final_category", "ideology_group"]).reset_index(drop=True)
+STANCE_COLORS = {"pro": "#2ecc71", "anti": "#e74c3c", "neutral": "#95a5a6"}
+STANCE_ORDER = ["pro", "anti", "neutral"]
 
-def add_binary_sentiment(df: pd.DataFrame) -> pd.DataFrame:
-    """Binary sentiment label as requested: >0 → positive, <0 → negative; ==0 stays NaN (ignored in binary rates)."""
-    df = df.copy()
-    labels = pd.Series(np.nan, index=df.index, dtype=object)
-    labels[df["sentiment_score"] > 0] = "positive"
-    labels[df["sentiment_score"] < 0] = "negative"
-    df["sentiment_label_bin"] = labels
-    return df
+
+def _violinplot_fallback(ax: plt.Axes, data: pd.DataFrame, *, x: str, y: str, hue: str) -> None:
+    """Draw a basic violin plot using matplotlib when seaborn is unavailable."""
+    categories = [c for c in data[x].dropna().unique()]
+    stances = [s for s in STANCE_ORDER if s in data[hue].dropna().unique()]
+    if not categories or not stances:
+        return
+
+    width = 0.8 / max(len(stances), 1)
+    centers = np.arange(len(categories), dtype=float)
+
+    for idx, cat in enumerate(categories):
+        for jdx, stance in enumerate(stances):
+            subset = data[(data[x] == cat) & (data[hue] == stance)][y].dropna()
+            if subset.empty:
+                continue
+            offset = (jdx - (len(stances) - 1) / 2.0) * width
+            position = centers[idx] + offset
+            parts = ax.violinplot(
+                subset.values,
+                positions=[position],
+                widths=width * 0.9,
+                showextrema=False,
+                showmeans=False,
+                showmedians=True,
+            )
+            for body in parts["bodies"]:
+                body.set_facecolor(STANCE_COLORS.get(stance, "#888888"))
+                body.set_edgecolor("black")
+                body.set_alpha(0.65)
+            if parts.get("cmedians") is not None:
+                parts["cmedians"].set_color("black")
+
+    ax.set_xticks(centers)
+    ax.set_xticklabels([str(cat).capitalize() for cat in categories])
+
+    handles = [
+        Patch(facecolor=STANCE_COLORS.get(stance, "#888888"), edgecolor="black", label=stance.capitalize())
+        for stance in stances
+    ]
+    if handles:
+        ax.legend(handles=handles, title="Stance", loc="lower right")
+
+
+def _heatmap_fallback(ax: plt.Axes, pivot: pd.DataFrame) -> None:
+    """Render a heatmap without seaborn using matplotlib primitives."""
+    data = pivot.values.astype(float)
+    im = ax.imshow(data, aspect="auto", cmap="RdYlGn_r", vmin=np.nanmin(data), vmax=np.nanmax(data))
+    plt.colorbar(im, ax=ax, label="Percentage")
+
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            ax.text(
+                j,
+                i,
+                f"{data[i, j]:.1f}",
+                ha="center",
+                va="center",
+                fontsize=9,
+                color="black",
+            )
+
+    ax.set_xticks(np.arange(pivot.shape[1]))
+    ax.set_xticklabels([str(col).capitalize() for col in pivot.columns], rotation=45, ha="right")
+    ax.set_yticks(np.arange(pivot.shape[0]))
+    ax.set_yticklabels([str(idx) for idx in pivot.index])
+
+
+def _boxplot_fallback(ax: plt.Axes, data: pd.DataFrame, *, x: str, y: str) -> None:
+    """Simple grouped boxplot without seaborn."""
+    stances = [s for s in STANCE_ORDER if s in data[x].dropna().unique()]
+    if not stances:
+        return
+
+    values = [data[data[x] == stance][y].dropna().values for stance in stances]
+    positions = np.arange(1, len(stances) + 1)
+    bp = ax.boxplot(values, positions=positions, widths=0.6, patch_artist=True)
+    for patch, stance in zip(bp["boxes"], stances):
+        patch.set_facecolor(STANCE_COLORS.get(stance, "#888888"))
+        patch.set_edgecolor("black")
+        patch.set_alpha(0.7)
+    for element in ("whiskers", "caps", "medians", "fliers"):
+        for artist in bp[element]:
+            artist.set(color="black", linewidth=1)
+    ax.set_xticks(positions)
+    ax.set_xticklabels([s.capitalize() for s in stances])
 
 # -------------------------
-# Content analysis (TF-IDF)
+# ESSENTIAL CORE PLOTS
 # -------------------------
-DEFAULT_STOPWORDS = set([
-    "the","and","is","in","to","of","for","on","that","it","with","as","this","are","be","or","by","from","at",
-    "an","was","but","have","has","if","not","you","they","he","she","we","i","a","so","do","does","did","will",
-    "would","can","could","should","about","into","over","than","then","there","their","them","these","those",
-    "ev","evs","electric","vehicle","vehicles","car","cars","tesla","battery","batteries","mandate","policy","policies"
-])
-def _ensure_text_column(df: pd.DataFrame) -> str:
-    for c in POSSIBLE_TEXT_COLUMNS:
-        if c in df.columns:
-            return c
-    raise KeyError(f"No text column found. Tried {POSSIBLE_TEXT_COLUMNS}. Available: {list(df.columns)}")
 
-def _clean_text(s: str) -> str:
-    s = str(s).lower()
-    s = re.sub(r"http\S+", " ", s)
-    s = re.sub(r"[^a-z0-9\s']", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+def plot_stance_distribution_by_ideology(df: pd.DataFrame, outdir: str) -> str:
+    """1. Stance Distribution by Ideology Group - stacked bars by subject."""
+    os.makedirs(outdir, exist_ok=True)
+    work = df.dropna(subset=["ideology_group", "stance", "subject"]).copy()
+    if work.empty:
+        return ""
 
-def compute_top_terms_by_group(
-    df: pd.DataFrame,
-    min_docs: int = 30,
-    n_terms: int = 20,
-    ngram_range=(1, 2),
-    extra_stopwords: Optional[List[str]] = None,
-) -> Dict[str, Dict[str, List[tuple[str, float]]]]:
-    """Return {final_category: {ideology_group: [(term, avg_weight), ...]}}."""
-    text_col = _ensure_text_column(df)
-    _df = df.copy()
-    _df[text_col] = _df[text_col].astype(str).map(_clean_text)
-    _df["pair"] = _df["final_category"].astype(str) + " | " + _df["ideology_group"].astype(str)
+    subjects = sorted(work["subject"].unique())
+    fig, axes = plt.subplots(1, len(subjects), figsize=(5*len(subjects), 6), squeeze=False)
+    axes = axes.flatten()
 
-    texts = _df[text_col].tolist()
-    groups = _df["pair"].tolist()
+    for idx, subj in enumerate(subjects):
+        ax = axes[idx]
+        subdf = work[work["subject"] == subj]
 
-    stop = DEFAULT_STOPWORDS.copy()
-    if extra_stopwords:
-        stop.update([w.strip().lower() for w in extra_stopwords])
+        counts = subdf.groupby(["ideology_group", "stance"]).size().reset_index(name="n")
+        totals = counts.groupby("ideology_group")["n"].transform("sum")
+        counts["prop"] = counts["n"] / totals
 
-    vect = TfidfVectorizer(ngram_range=ngram_range, stop_words=list(stop), max_df=0.95, min_df=2)
-    X = vect.fit_transform(texts)
-    vocab = np.array(vect.get_feature_names_out())
+        # Ensure all stances exist
+        for st in ["pro", "anti", "neutral"]:
+            if st not in counts["stance"].unique():
+                counts = pd.concat([counts, pd.DataFrame([{"ideology_group": ig, "stance": st, "n": 0, "prop": 0.0}
+                                                          for ig in counts["ideology_group"].unique()])], ignore_index=True)
 
-    idx_by_group = pd.Series(range(len(groups))).groupby(pd.Series(groups)).apply(list)
-    result_pair: Dict[str, List[tuple[str, float]]] = {}
-    for g, idx in idx_by_group.items():
-        if len(idx) < min_docs:
-            continue
-        sub = X[idx]
-        weights = np.asarray(sub.mean(axis=0)).ravel()
-        top_idx = np.argsort(-weights)[:n_terms]
-        result_pair[g] = list(zip(vocab[top_idx], weights[top_idx].tolist()))
+        pivot = counts.pivot_table(index="ideology_group", columns="stance", values="prop", fill_value=0)
 
-    out: Dict[str, Dict[str, List[tuple[str, float]]]] = {}
-    for pair, items in result_pair.items():
-        cat, ideo = [x.strip() for x in pair.split("|")]
-        out.setdefault(cat, {})[ideo] = items
+        pivot.plot(kind="bar", stacked=True, ax=ax,
+                   color=[STANCE_COLORS.get(c, "#777777") for c in pivot.columns])
+        ax.set_title(f"{subj.capitalize()}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Ideology Group", fontsize=10)
+        ax.set_ylabel("Proportion", fontsize=10)
+        ax.set_ylim(0, 1)
+        ax.legend(title="Stance", bbox_to_anchor=(1.05, 1), loc="upper left")
+        ax.tick_params(axis='x', rotation=45)
+
+    plt.suptitle("Stance Distribution by Ideology (faceted by Subject)",
+                 fontsize=14, fontweight="bold", y=1.02)
+    out = os.path.join(outdir, "1_stance_distribution_by_ideology.png")
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
     return out
 
-def safe_name(s: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", s)
+def plot_temporal_evolution(df: pd.DataFrame, outdir: str) -> str:
+    """2. Temporal Evolution - multi-line time series by ideology × stance."""
+    os.makedirs(outdir, exist_ok=True)
+    work = df.dropna(subset=["year_month", "ideology_group", "stance", "subject"]).copy()
+    if work.empty or "year_month" not in work.columns:
+        return ""
+
+    subjects = sorted(work["subject"].unique())
+    fig, axes = plt.subplots(len(subjects), 1, figsize=(14, 5*len(subjects)), squeeze=False)
+    axes = axes.flatten()
+
+    for idx, subj in enumerate(subjects):
+        ax = axes[idx]
+        subdf = work[work["subject"] == subj]
+
+        monthly = subdf.groupby(["year_month", "ideology_group", "stance"]).size().reset_index(name="n")
+        totals = monthly.groupby(["year_month", "ideology_group"])["n"].transform("sum")
+        monthly["prop"] = monthly["n"] / totals
+        monthly["date"] = monthly["year_month"].dt.to_timestamp()
+
+        for ideo in sorted(monthly["ideology_group"].unique()):
+            for stance in ["pro", "anti", "neutral"]:
+                subset = monthly[(monthly["ideology_group"] == ideo) & (monthly["stance"] == stance)]
+                if subset.empty:
+                    continue
+                linestyle = "-" if ideo == "liberal" else "--"
+                color = STANCE_COLORS.get(stance, "#777777")
+                label = f"{ideo.capitalize()} {stance.capitalize()}"
+                ax.plot(subset["date"], subset["prop"],
+                        linestyle=linestyle, color=color, linewidth=2,
+                        marker="o", markersize=3, label=label, alpha=0.8)
+
+        ax.set_title(f"{subj.capitalize()} Stances Over Time",
+                     fontsize=12, fontweight="bold")
+        ax.set_xlabel("Date", fontsize=10)
+        ax.set_ylabel("Proportion within Ideology", fontsize=10)
+        ax.legend(loc="best", frameon=True, framealpha=0.9)
+        ax.grid(True, alpha=0.3)
+
+    plt.suptitle("Temporal Evolution of Stances by Ideology",
+                 fontsize=14, fontweight="bold")
+    out = os.path.join(outdir, "2_temporal_evolution.png")
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+def plot_sankey_flow(df: pd.DataFrame, outdir: str) -> str:
+    """3. Subject Classification Flow - Sankey diagram."""
+    if not PLOTLY_AVAILABLE:
+        return ""
+
+    os.makedirs(outdir, exist_ok=True)
+    work = df.dropna(subset=["ideology_group", "subject", "stance"]).copy()
+    if work.empty:
+        return ""
+
+    flow = work.groupby(["ideology_group", "subject", "stance"]).size().reset_index(name="value")
+
+    ideologies = sorted(flow["ideology_group"].unique())
+    subjects = sorted(flow["subject"].unique())
+    stances = ["pro", "anti", "neutral"]  # fixed order for consistent coloring
+
+    nodes = ideologies + subjects + stances
+    node_dict = {n: i for i, n in enumerate(nodes)}
+
+    sources, targets, values = [], [], []
+    # Ideology -> Subject
+    for _, row in flow.groupby(["ideology_group", "subject"])["value"].sum().reset_index().iterrows():
+        sources.append(node_dict[row["ideology_group"]]); targets.append(node_dict[row["subject"]]); values.append(int(row["value"]))
+    # Subject -> Stance
+    for _, row in flow.iterrows():
+        sources.append(node_dict[row["subject"]]); targets.append(node_dict[row["stance"]]); values.append(int(row["value"]))
+
+    node_colors = (
+        ["#6baed6"] * len(ideologies) +
+        ["#bcbddc"] * len(subjects) +
+        [STANCE_COLORS["pro"], STANCE_COLORS["anti"], STANCE_COLORS["neutral"]]
+    )
+
+    fig = go.Figure(data=[go.Sankey(
+        node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=nodes, color=node_colors),
+        link=dict(source=sources, target=targets, value=values)
+    )])
+
+    fig.update_layout(title_text="EV Discussion Flow: Ideology → Subject → Stance", font_size=12, height=600)
+    out = os.path.join(outdir, "3_sankey_flow.html")
+    fig.write_html(out)
+    return out
+
+def plot_confidence_distributions(df: pd.DataFrame, outdir: str) -> str:
+    """4. Confidence Distribution - violin plots."""
+    os.makedirs(outdir, exist_ok=True)
+    work = df.dropna(subset=["confidence", "ideology_group", "stance", "subject"]).copy()
+    if work.empty:
+        return ""
+
+    subjects = sorted(work["subject"].unique())
+    fig, axes = plt.subplots(1, len(subjects), figsize=(6*len(subjects), 6), squeeze=False)
+    axes = axes.flatten()
+
+    for idx, subj in enumerate(subjects):
+        ax = axes[idx]
+        subdf = work[work["subject"] == subj]
+        if HAVE_SEABORN:
+            sns.violinplot(
+                data=subdf,
+                x="ideology_group",
+                y="confidence",
+                hue="stance",
+                split=False,
+                ax=ax,
+                inner="quartile",
+                palette=STANCE_COLORS,
+            )
+            ax.legend(title="Stance", loc="lower right")
+        else:
+            _violinplot_fallback(ax, subdf, x="ideology_group", y="confidence", hue="stance")
+        ax.set_title(f"{subj.capitalize()}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Ideology Group", fontsize=10)
+        ax.set_ylabel("Stance Confidence", fontsize=10)
+
+    plt.suptitle("Stance Confidence Distributions",
+                 fontsize=14, fontweight="bold", y=1.02)
+    out = os.path.join(outdir, "4_confidence_distributions.png")
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return out
 
 # -------------------------
-# Plot helpers
+# ADVANCED ANALYTICAL PLOTS
 # -------------------------
-plt.rcParams.update({"figure.autolayout": True})
 
-def _plot_counts_by_category_grouped_by_ideology(counts: pd.DataFrame, outdir: str, fname: str) -> str:
-    if counts.empty: return ""
+def plot_sentiment_stance_vader(df: pd.DataFrame, outdir: str) -> str:
+    """5a. Sentiment vs Stance (VADER) - scatter/hexbin."""
     os.makedirs(outdir, exist_ok=True)
-    pivot = counts.pivot_table(index="final_category", columns="ideology_group", values="n", aggfunc="sum", fill_value=0)
-    fig, ax = plt.subplots(figsize=(11, 6))
-    pivot.plot(kind="bar", ax=ax)
-    ax.set_ylabel("Count")
-    ax.set_title("Counts by Final Category, grouped by Ideology")
-    out = os.path.join(outdir, fname); fig.savefig(out, dpi=200); plt.close(fig); return out
+    work = df.dropna(subset=["sentiment_vader", "confidence", "stance", "ideology_group"]).copy()
+    if work.empty:
+        return ""
 
-def _plot_counts_by_ideology_grouped_by_category(counts: pd.DataFrame, outdir: str, fname: str) -> str:
-    if counts.empty: return ""
+    work["signed_confidence"] = work["confidence"]
+    work.loc[work["stance"] == "anti", "signed_confidence"] *= -1
+    work.loc[work["stance"] == "neutral", "signed_confidence"] = 0
+
+    ideos = sorted(work["ideology_group"].dropna().unique())
+    fig, axes = plt.subplots(1, len(ideos), figsize=(7*len(ideos), 6))
+
+    if len(ideos) == 1:
+        axes = [axes]
+
+    for ax, ideo in zip(axes, ideos):
+        subdf = work[work["ideology_group"] == ideo]
+        hb = ax.hexbin(subdf["sentiment_vader"], subdf["signed_confidence"],
+                       gridsize=30, cmap="YlOrRd", mincnt=1, alpha=0.8)
+        ax.axhline(y=0, color="black", linestyle="--", alpha=0.3, linewidth=1)
+        ax.axvline(x=0, color="black", linestyle="--", alpha=0.3, linewidth=1)
+        ax.set_title(f"{ideo.capitalize()}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("VADER Sentiment Score", fontsize=10)
+        ax.set_ylabel("Signed Stance Confidence\n(+Pro, 0 Neutral, -Anti)", fontsize=10)
+        ax.set_xlim(-1, 1); ax.set_ylim(-1, 1)
+        plt.colorbar(hb, ax=ax, label="Count")
+
+    plt.suptitle("Sentiment vs Stance Confidence (VADER)",
+                 fontsize=14, fontweight="bold")
+    out = os.path.join(outdir, "5a_sentiment_stance_vader.png")
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+def plot_sentiment_stance_transformer(df: pd.DataFrame, outdir: str) -> str:
+    """5b. Sentiment vs Stance (Transformer) - scatter/hexbin."""
     os.makedirs(outdir, exist_ok=True)
-    pivot = counts.pivot_table(index="ideology_group", columns="final_category", values="n", aggfunc="sum", fill_value=0)
-    fig, ax = plt.subplots(figsize=(11, 6))
-    pivot.plot(kind="bar", ax=ax)
-    ax.set_ylabel("Count")
-    ax.set_title("Counts by Ideology, grouped by Final Category")
-    out = os.path.join(outdir, fname); fig.savefig(out, dpi=200); plt.close(fig); return out
+    work = df.dropna(subset=["sentiment_transformer_score", "sentiment_transformer_label",
+                             "confidence", "stance", "ideology_group"]).copy()
+    if work.empty:
+        return ""
 
-def _plot_props_within_ideology(counts: pd.DataFrame, outdir: str, fname: str) -> str:
-    """Stacked proportions of categories within each ideology."""
-    if counts.empty: return ""
+    work["transformer_signed"] = work["sentiment_transformer_score"]
+    work.loc[work["sentiment_transformer_label"].str.contains("neg", case=False, na=False),
+             "transformer_signed"] *= -1
+
+    work["signed_confidence"] = work["confidence"]
+    work.loc[work["stance"] == "anti", "signed_confidence"] *= -1
+    work.loc[work["stance"] == "neutral", "signed_confidence"] = 0
+
+    ideos = sorted(work["ideology_group"].dropna().unique())
+    fig, axes = plt.subplots(1, len(ideos), figsize=(7*len(ideos), 6))
+    if len(ideos) == 1:
+        axes = [axes]
+
+    for ax, ideo in zip(axes, ideos):
+        subdf = work[work["ideology_group"] == ideo]
+        hb = ax.hexbin(subdf["transformer_signed"], subdf["signed_confidence"],
+                       gridsize=30, cmap="YlGnBu", mincnt=1, alpha=0.8)
+        ax.axhline(y=0, color="black", linestyle="--", alpha=0.3, linewidth=1)
+        ax.axvline(x=0, color="black", linestyle="--", alpha=0.3, linewidth=1)
+        ax.set_title(f"{ideo.capitalize()}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Transformer Sentiment Score (signed)", fontsize=10)
+        ax.set_ylabel("Signed Stance Confidence\n(+Pro, 0 Neutral, -Anti)", fontsize=10)
+        plt.colorbar(hb, ax=ax, label="Count")
+
+    plt.suptitle("Sentiment vs Stance Confidence (Transformer)",
+                 fontsize=14, fontweight="bold")
+    out = os.path.join(outdir, "5b_sentiment_stance_transformer.png")
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+def plot_subreddit_heatmap(df: pd.DataFrame, outdir: str) -> str:
+    """6. Subreddit-Level Heatmap - stance percentages by subreddit."""
     os.makedirs(outdir, exist_ok=True)
-    df = counts.groupby(["ideology_group", "final_category"])["n"].sum().reset_index()
-    totals = df.groupby("ideology_group")["n"].transform("sum")
-    df["share"] = df["n"] / totals
-    pivot = df.pivot_table(index="ideology_group", columns="final_category", values="share", fill_value=0)
-    fig, ax = plt.subplots(figsize=(11, 6)); bottom = np.zeros(len(pivot))
-    for col in pivot.columns:
-        ax.bar(pivot.index, pivot[col].values, bottom=bottom, label=col); bottom += pivot[col].values
-    ax.set_ylabel("Proportion within Ideology"); ax.set_title("Final Category proportions within each Ideology")
-    ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
-    out = os.path.join(outdir, fname); fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig); return out
+    work = df.dropna(subset=["subreddit", "stance", "ideology_group"]).copy()
+    if work.empty or "subreddit" not in work.columns:
+        return ""
 
-def _plot_props_within_category(counts: pd.DataFrame, outdir: str, fname: str) -> str:
-    """Stacked proportions of ideologies within each category."""
-    if counts.empty: return ""
-    os.makedirs(outdir, exist_ok=True)
-    df = counts.groupby(["final_category", "ideology_group"])["n"].sum().reset_index()
-    totals = df.groupby("final_category")["n"].transform("sum")
-    df["share"] = df["n"] / totals
-    pivot = df.pivot_table(index="final_category", columns="ideology_group", values="share", fill_value=0)
-    fig, ax = plt.subplots(figsize=(11, 6)); bottom = np.zeros(len(pivot))
-    for col in pivot.columns:
-        ax.bar(pivot.index, pivot[col].values, bottom=bottom, label=col); bottom += pivot[col].values
-    ax.set_ylabel("Proportion within Final Category"); ax.set_title("Ideology proportions within each Final Category")
-    ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
-    out = os.path.join(outdir, fname); fig.savefig(out, dpi=200, bbox_inches="tight"); plt.close(fig); return out
+    counts = work.groupby(["subreddit", "stance"]).size().reset_index(name="n")
+    totals = counts.groupby("subreddit")["n"].transform("sum")
+    counts["prop"] = counts["n"] / totals * 100
 
-def _plot_sentiment_heatmap(stats: pd.DataFrame, outdir: str, fname: str) -> str:
-    if stats.empty: return ""
-    os.makedirs(outdir, exist_ok=True)
-    pivot = stats.pivot_table(index="final_category", columns="ideology_group", values="sent_mean")
-    fig, ax = plt.subplots(figsize=(10, 6))
-    im = ax.imshow(pivot.values, aspect="auto")
-    ax.set_xticks(range(pivot.shape[1])); ax.set_xticklabels(pivot.columns)
-    ax.set_yticks(range(pivot.shape[0])); ax.set_yticklabels(pivot.index)
-    ax.set_title("Mean VADER Sentiment (continuous) by Final Category × Ideology")
-    for i in range(pivot.shape[0]):
-        for j in range(pivot.shape[1]):
-            val = pivot.values[i, j]
-            label = "NA" if pd.isna(val) else f"{float(val):.2f}"
-            ax.text(j, i, label, ha="center", va="center", fontsize=9)
-    out = os.path.join(outdir, fname); fig.savefig(out, dpi=200); plt.close(fig); return out
+    # Ensure all stance columns exist
+    for st in ["pro", "anti", "neutral"]:
+        if st not in counts["stance"].unique():
+            counts = pd.concat([counts, pd.DataFrame([{"subreddit": sr, "stance": st, "n": 0, "prop": 0.0}
+                                                      for sr in counts["subreddit"].unique()])], ignore_index=True)
 
-def _plot_binary_rate(df: pd.DataFrame, outdir: str, fname: str) -> str:
-    """Show positive rate by cell for binomial sentiment (>0)."""
-    work = df.dropna(subset=["sentiment_label_bin"]).groupby(
-        ["final_category","ideology_group"]
-    )["sentiment_label_bin"].apply(lambda s: (s=="positive").mean()).reset_index(name="positive_rate")
-    if work.empty: return ""
-    os.makedirs(outdir, exist_ok=True)
-    pivot = work.pivot_table(index="final_category", columns="ideology_group", values="positive_rate")
-    fig, ax = plt.subplots(figsize=(10,6))
-    pivot.plot(kind="bar", ax=ax)
-    ax.set_ylabel("Positive rate (>0)"); ax.set_title("Binary sentiment positive-rate by Final Category × Ideology")
-    out = os.path.join(outdir, fname); fig.savefig(out, dpi=200); plt.close(fig); return out
+    pivot = counts.pivot_table(index="subreddit", columns="stance", values="prop", fill_value=0)
 
-# -------------------------
-# CLI
-# -------------------------
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Analyze EV stances/sentiment/content and generate plots + report.")
-    p.add_argument("--stance_csv", required=True, help="Output CSV from label_stance.py")
-    p.add_argument("--sentiment_csv", required=True, help="Output CSV from score_sentiment.py")
-    p.add_argument("--out_dir", required=True, help="Directory to write figures, tables, terms, report")
-    p.add_argument("--confidence_col", default="confidence", help="Stance confidence column name")
-    p.add_argument("--confidence_min", type=float, default=0.7, help="Minimum confidence to include in filtered plots")
-    p.add_argument("--min_docs_terms", type=int, default=30, help="Minimum docs per (category, ideology) for top-terms")
-    p.add_argument("--n_terms", type=int, default=20, help="Number of top terms to export per group")
-    p.add_argument("--extra_stopwords", type=str, default="", help="Comma-separated extra stopwords for content analysis")
-    p.add_argument("--min_n_sentiment", type=int, default=10, help="Min N per cell to include in sentiment summaries")
-    return p.parse_args()
+    ideo_map = work[["subreddit", "ideology_group"]].drop_duplicates().set_index("subreddit")["ideology_group"]
+    pivot["_ideology"] = pivot.index.map(ideo_map)
+    # Sort: ideology (liberal first), then higher Anti %
+    if "anti" not in pivot.columns:
+        pivot["anti"] = 0.0
+    pivot = pivot.sort_values(["_ideology", "anti"], ascending=[True, False]).drop(columns=["_ideology"])
 
-def main() -> None:
-    args = parse_args()
-
-    # Output tree
-    figs = os.path.join(args.out_dir, "figures")
-    figs_filt = os.path.join(args.out_dir, f"figures_confidence_ge_{args.confidence_min:g}")
-    tables = os.path.join(args.out_dir, "tables")
-    terms_dir = os.path.join(args.out_dir, "terms")
-    samples_dir = os.path.join(args.out_dir, "samples")
-    reports_dir = os.path.join(args.out_dir, "reports")
-    for d in [args.out_dir, figs, figs_filt, tables, terms_dir, samples_dir, reports_dir]:
-        os.makedirs(d, exist_ok=True)
-
-    merged, stance_df, sent_df = load_frames(args.stance_csv, args.sentiment_csv)
-
-    # Fill ideology from either file handled in load_frames; report if any still missing
-    missing_ideo = merged["ideology_group"].isna().sum()
-    if missing_ideo > 0:
-        print(f"[WARN] {missing_ideo} rows still missing ideology_group — dropping for groupwise plots.")
-
-    # Save merged to CSV
-    merged_path = os.path.join(tables, "merged_labels_sentiment.csv")
-    merged.to_csv(merged_path, index=False)
-
-    # Prepare plotting dataframe
-    plot_df = merged.dropna(subset=["ideology_group"]).copy()
-    plot_df = add_binary_sentiment(plot_df)
-
-    # 1) Counts per final_category × ideology_group (tables)
-    counts = plot_df.groupby(["final_category", "ideology_group"]).size().reset_index(name="n")
-    counts_path = os.path.join(tables, "counts_by_category_ideology.csv")
-    counts.to_csv(counts_path, index=False)
-
-    # 2) Per-subreddit counts → TXT
-    txt_path = os.path.join(tables, "counts_by_category_ideology_per_subreddit.txt")
-    if "subreddit" in plot_df.columns:
-        sub_counts = (
-            plot_df.groupby(["subreddit", "final_category", "ideology_group"])
-            .size()
-            .reset_index(name="n")
+    fig, ax = plt.subplots(figsize=(10, max(8, len(pivot)*0.3)))
+    if HAVE_SEABORN:
+        sns.heatmap(
+            pivot,
+            annot=True,
+            fmt=".1f",
+            cmap="RdYlGn_r",
+            center=33.3,
+            cbar_kws={"label": "Percentage"},
+            ax=ax,
+            linewidths=0.5,
         )
-        with open(txt_path, "w", encoding="utf-8") as f:
-            for (sr, cat, ideo), n in sub_counts.set_index(["subreddit", "final_category", "ideology_group"])["n"].items():
-                f.write(f"{sr}\t{cat}\t{ideo}\t{n}\n")
     else:
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write("# 'subreddit' column not available — no per-subreddit counts computed.\n")
+        _heatmap_fallback(ax, pivot)
 
-    # 3) Sentiment summaries (continuous)
-    sent_stats = summarize_sentiment_continuous(plot_df, min_n=args.min_n_sentiment)
-    sent_stats_path = os.path.join(tables, "sentiment_summary_continuous.csv")
-    sent_stats.to_csv(sent_stats_path, index=False)
+    ax.set_title("Stance Distribution by Subreddit", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Stance", fontsize=11)
+    ax.set_ylabel("Subreddit", fontsize=11)
 
-    # 4) Plots — unfiltered
-    _plot_counts_by_category_grouped_by_ideology(counts, figs, "counts_by_category__grouped_by_ideology.png")
-    _plot_counts_by_ideology_grouped_by_category(counts, figs, "counts_by_ideology__grouped_by_category.png")
-    _plot_props_within_ideology(counts, figs, "proportions_within_ideology.png")
-    _plot_props_within_category(counts, figs, "proportions_within_category.png")
-    _plot_sentiment_heatmap(sent_stats, figs, "sentiment_heatmap.png")
-    _plot_binary_rate(plot_df, figs, "binary_positive_rate.png")
+    out = os.path.join(outdir, "6_subreddit_heatmap.png")
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return out
 
-    # 5) Confidence-filtered variants (if column present)
-    if args.confidence_col in plot_df.columns:
-        filt = plot_df[plot_df[args.confidence_col] >= float(args.confidence_min)].copy()
-        counts_f = filt.groupby(["final_category", "ideology_group"]).size().reset_index(name="n")
-        sent_stats_f = summarize_sentiment_continuous(filt, min_n=args.min_n_sentiment)
+def plot_engagement_analysis(df: pd.DataFrame, outdir: str) -> str:
+    """7. Score/Engagement Analysis - box plots of Reddit scores."""
+    os.makedirs(outdir, exist_ok=True)
+    work = df.dropna(subset=["score", "ideology_group", "stance"]).copy()
+    if work.empty or "score" not in work.columns:
+        return ""
 
-        _plot_counts_by_category_grouped_by_ideology(counts_f, figs_filt, "counts_by_category__grouped_by_ideology.png")
-        _plot_counts_by_ideology_grouped_by_category(counts_f, figs_filt, "counts_by_ideology__grouped_by_category.png")
-        _plot_props_within_ideology(counts_f, figs_filt, "proportions_within_ideology.png")
-        _plot_props_within_category(counts_f, figs_filt, "proportions_within_category.png")
-        _plot_sentiment_heatmap(sent_stats_f, figs_filt, "sentiment_heatmap.png")
-        _plot_binary_rate(filt, figs_filt, "binary_positive_rate.png")
+    work["log_score"] = np.log10(work["score"] + 2)
+
+    ideos = sorted(work["ideology_group"].dropna().unique())
+    fig, axes = plt.subplots(1, len(ideos), figsize=(7*len(ideos), 6))
+    if len(ideos) == 1:
+        axes = [axes]
+
+    for ax, ideo in zip(axes, ideos):
+        subdf = work[work["ideology_group"] == ideo]
+        if HAVE_SEABORN:
+            sns.boxplot(data=subdf, x="stance", y="log_score", ax=ax, palette=STANCE_COLORS)
+        else:
+            _boxplot_fallback(ax, subdf, x="stance", y="log_score")
+        ax.set_title(f"{ideo.capitalize()}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Stance", fontsize=10)
+        ax.set_ylabel("Log10(Score + 2)", fontsize=10)
+
+    plt.suptitle("Engagement (Reddit Scores) by Stance and Ideology",
+                 fontsize=14, fontweight="bold")
+    out = os.path.join(outdir, "7_engagement_analysis.png")
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+# -------------------------
+# QUALITY CONTROL PLOTS
+# -------------------------
+
+def plot_classification_diagnostics(df: pd.DataFrame, outdir: str) -> str:
+    """8. Classification Diagnostics - NLI score scatter and threshold analysis."""
+    os.makedirs(outdir, exist_ok=True)
+
+    if "nli_pro" in df.columns and "nli_anti" in df.columns:
+        work = df.dropna(subset=["nli_pro", "nli_anti", "stance"]).copy()
     else:
-        print(f"[INFO] Confidence column '{args.confidence_col}' not found; filtered plots skipped.")
+        # Fallback: approximate from confidence
+        work = df.dropna(subset=["confidence", "stance"]).copy()
+        work["nli_pro"] = np.where(work["stance"] == "pro", work["confidence"], 1 - work["confidence"])
+        work["nli_anti"] = np.where(work["stance"] == "anti", work["confidence"], 1 - work["confidence"])
 
-    # 6) Content analysis (TF-IDF)
-    extra_stop = [w.strip() for w in args.extra_stopwords.split(",") if w.strip()] if args.extra_stopwords else None
-    try:
-        terms = compute_top_terms_by_group(plot_df, min_docs=args.min_docs_terms, n_terms=args.n_terms,
-                                           ngram_range=(1, 2), extra_stopwords=extra_stop)
-        index: Dict[str, Dict[str, str]] = {}
-        for cat, ideod in terms.items():
-            for ideo, items in ideod.items():
-                df_terms = pd.DataFrame(items, columns=["term", "avg_tfidf_weight"])
-                fname = f"top_terms__{safe_name(cat)}__{safe_name(ideo)}.csv"
-                path = os.path.join(terms_dir, fname)
-                df_terms.to_csv(path, index=False)
-                index.setdefault(cat, {})[ideo] = fname
-        index_path = os.path.join(terms_dir, "top_terms_index.json")
-        with open(index_path, "w", encoding="utf-8") as f:
-            json.dump(index, f, indent=2)
-    except Exception as e:
-        with open(os.path.join(terms_dir, "ERROR.txt"), "w", encoding="utf-8") as f:
-            f.write(str(e))
+    if work.empty:
+        return ""
 
-    # 7) Samples per final_category (30 rows each)
-    if "final_category" in plot_df.columns:
-        for cat, sub in plot_df.groupby("final_category"):
-            sample = sub.sample(n=min(30, len(sub)), random_state=42)
-            sample_path = os.path.join(samples_dir, f"sample__{safe_name(cat)}.csv")
-            sample.to_csv(sample_path, index=False)
+    fig, axes = plt.subplots(1, 3, figsize=(16, 6))
 
-    # 8) Markdown report (short)
-    report_md = os.path.join(reports_dir, "EV_opinions_report.md")
-    lines: List[str] = []
-    lines.append("# EV Opinions — Analysis Summary\n")
-    lines.append("This report includes count & proportion comparisons by ideology/final_category, continuous VADER sentiment, binary rates, and confidence-filtered variants.\n")
-    lines.append("## Data\n")
-    lines.append(f"- Merged CSV: `{os.path.relpath(merged_path, reports_dir)}`")
-    lines.append(f"- Counts: `{os.path.relpath(counts_path, reports_dir)}`")
-    lines.append(f"- Sentiment summary (continuous): `{os.path.relpath(sent_stats_path, reports_dir)}`")
-    lines.append("\n## Figures (unfiltered)\n")
-    for fname in sorted(os.listdir(figs)):
-        if fname.lower().endswith(".png"):
-            lines.append(f"![{fname}]({os.path.join('..','figures',fname)})")
-    if os.path.isdir(figs_filt):
-        lines.append(f"\n## Figures (confidence ≥ {args.confidence_min:g})\n")
-        for fname in sorted(os.listdir(figs_filt)):
-            if fname.lower().endswith(".png"):
-                lines.append(f"![{fname}]({os.path.join('..',os.path.basename(figs_filt),fname)})")
-    with open(report_md, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    # Scatter Pro vs Anti
+    ax1 = axes[0]
+    for stance, color in STANCE_COLORS.items():
+        subset = work[work["stance"] == stance]
+        ax1.scatter(subset["nli_pro"], subset["nli_anti"], alpha=0.3, s=10, c=color, label=stance.capitalize())
+    ax1.plot([0, 1], [0, 1], 'k--', alpha=0.3, linewidth=2, label="Decision boundary")
+    ax1.set_xlabel("Pro Score", fontsize=10); ax1.set_ylabel("Anti Score", fontsize=10)
+    ax1.set_title("NLI Score Distribution", fontsize=12, fontweight="bold")
+    ax1.legend(loc="best"); ax1.grid(True, alpha=0.3)
 
-    print("Analysis complete.")
-    print(f"- Merged table: {merged_path}")
-    print(f"- Counts table: {counts_path}")
-    print(f"- Per-subreddit counts (txt): {txt_path}")
-    print(f"- Sentiment summary (continuous): {sent_stats_path}")
-    print(f"- Figures dir: {figs}")
-    print(f"- Confidence-filtered figures dir: {figs_filt}")
-    print(f"- Terms dir: {terms_dir}")
-    print(f"- Samples dir: {samples_dir}")
-    print(f"- Report: {report_md}")
+    # Histogram of differences
+    ax2 = axes[1]
+    work["score_diff"] = work["nli_pro"] - work["nli_anti"]
+    for stance, color in STANCE_COLORS.items():
+        subset = work[work["stance"] == stance]
+        ax2.hist(subset["score_diff"], bins=50, alpha=0.5, color=color, label=stance.capitalize(), density=True)
+    ax2.axvline(x=0, color="black", linestyle="--", alpha=0.5, linewidth=2)
+    ax2.set_xlabel("Score Difference (Pro - Anti)", fontsize=10)
+    ax2.set_ylabel("Density", fontsize=10)
+    ax2.set_title("Score Difference Distribution", fontsize=12, fontweight="bold")
+    ax2.legend(loc="best"); ax2.grid(True, alpha=0.3)
+
+    # Confidence by max NLI score
+    ax3 = axes[2]
+    work["max_score"] = work[["nli_pro", "nli_anti"]].max(axis=1)
+    for stance, color in STANCE_COLORS.items():
+        subset = work[work["stance"] == stance]
+        ax3.scatter(subset["max_score"], subset["confidence"], alpha=0.3, s=10, c=color, label=stance.capitalize())
+    ax3.set_xlabel("Max NLI Score", fontsize=10); ax3.set_ylabel("Confidence", fontsize=10)
+    ax3.set_title("Confidence vs Max Score", fontsize=12, fontweight="bold")
+    ax3.legend(loc="best"); ax3.grid(True, alpha=0.3)
+
+    plt.suptitle("Classification Diagnostics", fontsize=14, fontweight="bold")
+    out = os.path.join(outdir, "8_classification_diagnostics.png")
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+# -------------------------
+# HTML REPORT GENERATION
+# -------------------------
+
+def generate_html_report(df: pd.DataFrame, outdir: str, plot_paths: Dict[str, str]) -> str:
+    """Generate comprehensive HTML report with plots and explanations."""
+
+    total_posts = int(len(df))
+    ideology_counts = df["ideology_group"].value_counts(dropna=True).to_dict()
+    stance_counts = df["stance"].value_counts(dropna=True).to_dict()
+    subject_counts = df["subject"].value_counts(dropna=True).to_dict()
+
+    if "datetime" in df.columns and df["datetime"].notna().any():
+        date_min = df["datetime"].min().strftime("%b %Y")
+        date_max = df["datetime"].max().strftime("%b %Y")
+        date_range = f"{date_min} – {date_max}"
+    else:
+        date_range = "Not available"
+
+    # Helper for <img> blocks
+    def img_block(path: str, title: str, caption: str) -> str:
+        if not path:
+            return ""
+        fname = os.path.basename(path)
+        return f"""
+        <section class="card">
+            <h2>{title}</h2>
+            <p class="caption">{caption}</p>
+            {"<iframe src='"+fname+"' class='plotly'></iframe>" if path.endswith(".html") else f"<img src='{fname}' alt='{title}' />"}
+        </section>
+        """
+
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EV Reddit Stance Analysis Report</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6; max-width: 1100px; margin: 0 auto; padding: 24px; background: #fafafa; color: #222;
+  }}
+  .header {{
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px;
+  }}
+  .meta {{ display: grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap: 12px; }}
+  .chip {{ background: #fff; border-radius: 10px; padding: 8px 12px; box-shadow: 0 2px 6px rgba(0,0,0,.06); }}
+  .card {{
+    background: #fff; border-radius: 12px; padding: 16px; margin: 18px 0;
+    box-shadow: 0 2px 10px rgba(0,0,0,.07);
+  }}
+  h1 {{ margin: 0 0 8px 0; }}
+  h2 {{ margin: 0 0 6px 0; }}
+  .legend {{
+    display:flex; gap:10px; margin: 8px 0 0 0;
+  }}
+  .legend .swatch {{ width:14px; height:14px; border-radius:3px; display:inline-block; vertical-align:middle; margin-right:6px; }}
+  .caption {{ color:#555; margin: 8px 0 14px 0; }}
+  img {{ width: 100%; height: auto; border-radius: 8px; }}
+  .plotly {{ width: 100%; height: 620px; border: none; border-radius: 8px; background: #fff; }}
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>EV Reddit Stance Analysis</h1>
+    <div class="meta">
+      <div class="chip"><strong>Date range:</strong> {date_range}</div>
+      <div class="chip"><strong>Total items:</strong> {total_posts}</div>
+      <div class="chip"><strong>Subjects (counts):</strong> {subject_counts}</div>
+      <div class="chip"><strong>Stances (counts):</strong> {stance_counts}</div>
+    </div>
+    <div class="legend">
+      <span><span class="swatch" style="background:{STANCE_COLORS['pro']}"></span>Pro</span>
+      <span><span class="swatch" style="background:{STANCE_COLORS['anti']}"></span>Anti</span>
+      <span><span class="swatch" style="background:{STANCE_COLORS['neutral']}"></span>Neutral</span>
+    </div>
+    <p style="margin-top:8px;">
+      <em>Notes:</em> Stance labels are assigned with a zero-shot MNLI classifier. 
+      <strong>Neutral</strong> indicates the model could not confidently support either pro or anti hypotheses for the primary subject 
+      (i.e., unclear/ambiguous stance by the lightweight BERT model; confidence is |pro−anti| after thresholding).
+    </p>
+  </div>
+
+  {img_block(plot_paths.get("stance_by_ideology",""), "1) Stance distribution by ideology (per subject)",
+    "Stacked proportions of Pro/Anti/Neutral within each ideology for each subject area (product, mandate, policy).")}
+
+  {img_block(plot_paths.get("temporal",""), "2) Temporal evolution of stances",
+    "Monthly proportions within ideology over time. Solid line: liberal; dashed line: conservative.")}
+  
+  {img_block(plot_paths.get("sankey",""), "3) Discussion flow: Ideology → Subject → Stance",
+    "How posts flow from ideological groups to primary subject and final stance labels.")}
+
+  {img_block(plot_paths.get("confidence",""), "4) Confidence distributions",
+    "Model confidence by ideology and stance (higher means a clearer Pro vs Anti separation). Neutral items commonly show lower confidence.")}
+
+  {img_block(plot_paths.get("vader",""), "5a) Sentiment vs stance confidence (VADER)",
+    "Signed stance confidence (+Pro, 0 Neutral, −Anti) vs VADER polarity. Sentiment is not the same as stance but can correlate in aggregates.")}
+
+  {img_block(plot_paths.get("transformer",""), "5b) Sentiment vs stance confidence (Transformer)",
+    "Signed stance confidence vs transformer sentiment scores (positive vs negative).")}
+
+  {img_block(plot_paths.get("heatmap",""), "6) Subreddit-level stance distribution",
+    "Percentage of stances by subreddit. Helpful for spotting communities with comparatively higher Anti or Pro shares.")}
+
+  {img_block(plot_paths.get("engagement",""), "7) Engagement by stance",
+    "Log-scaled Reddit score distributions by stance within each ideology. Differences here indicate which stances get more upvotes.")}
+
+  {img_block(plot_paths.get("diagnostics",""), "8) Classification diagnostics",
+    "Scatter of subject-specific NLI Pro vs Anti scores, their differences, and relation to overall confidence (useful QC for thresholds).")}
+
+  <div class="card" style="margin-top:22px;">
+    <h2>Methodology snapshot</h2>
+    <p>
+      Data originate from Pushshift Reddit dumps (submissions and comments), filtered by EV-related keyword families 
+      (product, mandate, policy) plus negative filters to remove unrelated senses (e.g., electron-volt).
+      Subject scores combine raw keyword hits via a saturating transform and the highest scoring subject becomes “primary.”
+      Stance is inferred with a zero-shot MNLI model comparing Pro vs Anti hypotheses for that primary subject;
+      when neither is confidently supported, the stance is <strong>Neutral</strong>. Sentiment uses VADER and (optionally) a transformer classifier.
+    </p>
+  </div>
+</body>
+</html>
+"""
+    # Write HTML next to plots
+    out_html = os.path.join(outdir, "EV_Reddit_Stance_Report.html")
+    with open(out_html, "w", encoding="utf-8") as f:
+        f.write(html)
+    return out_html
+
+# -------------------------
+# DRIVER
+# -------------------------
+
+def main():
+    ap = argparse.ArgumentParser(description="EV Reddit opinions: analysis and HTML report")
+    ap.add_argument("--stance_csv", required=True)
+    ap.add_argument("--sentiment_csv", required=True)
+    ap.add_argument("--out_dir", required=True)
+    ap.add_argument("--confidence_min", type=float, default=0.0,
+                    help="Optional filter: keep rows with confidence >= this value")
+    args = ap.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    df, _stance_raw, _sent_raw = load_frames(args.stance_csv, args.sentiment_csv)
+
+    # Optional confidence filter
+    if args.confidence_min and "confidence" in df.columns:
+        df = df[df["confidence"].fillna(0) >= float(args.confidence_min)]
+
+    # Produce plots
+    paths = {}
+    paths["stance_by_ideology"] = plot_stance_distribution_by_ideology(df, args.out_dir)
+    paths["temporal"]           = plot_temporal_evolution(df, args.out_dir)
+    paths["sankey"]             = plot_sankey_flow(df, args.out_dir)
+    paths["confidence"]         = plot_confidence_distributions(df, args.out_dir)
+    paths["vader"]              = plot_sentiment_stance_vader(df, args.out_dir)
+    paths["transformer"]        = plot_sentiment_stance_transformer(df, args.out_dir)
+    paths["heatmap"]            = plot_subreddit_heatmap(df, args.out_dir)
+    paths["engagement"]         = plot_engagement_analysis(df, args.out_dir)
+    paths["diagnostics"]        = plot_classification_diagnostics(df, args.out_dir)
+
+    # Copy plot files into the out_dir root (already saved there), and build HTML
+    report = generate_html_report(df, args.out_dir, paths)
+    print(f"[OK] Report written to: {report}")
 
 if __name__ == "__main__":
     main()
