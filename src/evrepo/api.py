@@ -20,6 +20,65 @@ from .weak_rules import WeakRuleScore, WeakRuleScorer
 LOGGER = logging.getLogger("evrepo.api")
 
 
+def _stance_schema(include_weak: bool) -> Dict[str, pl.DataType]:
+    """Return the expected Polars schema for stance output rows."""
+    schema: Dict[str, pl.DataType] = {
+        "id": pl.Utf8,
+        "created_utc": pl.Int64,
+        "subreddit": pl.Utf8,
+        "ideology_group": pl.Utf8,
+        "is_submission": pl.Boolean,
+        "record_type": pl.Utf8,
+        "text": pl.Utf8,
+        "subject_product_raw": pl.Float64,
+        "subject_product_norm": pl.Float64,
+        "subject_mandate_raw": pl.Float64,
+        "subject_mandate_norm": pl.Float64,
+        "subject_policy_raw": pl.Float64,
+        "subject_policy_norm": pl.Float64,
+        "nli_product_pro": pl.Float64,
+        "nli_product_anti": pl.Float64,
+        "nli_mandate_pro": pl.Float64,
+        "nli_mandate_anti": pl.Float64,
+        "nli_policy_pro": pl.Float64,
+        "nli_policy_anti": pl.Float64,
+        "final_subject": pl.Utf8,
+        "final_stance": pl.Utf8,
+        "final_category": pl.Utf8,
+        "fused_pro": pl.Float64,
+        "fused_anti": pl.Float64,
+        "confidence": pl.Float64,
+    }
+    if include_weak:
+        schema.update(
+            {
+                "weak_product_pro": pl.Float64,
+                "weak_product_anti": pl.Float64,
+                "weak_mandate_pro": pl.Float64,
+                "weak_mandate_anti": pl.Float64,
+                "weak_policy_pro": pl.Float64,
+                "weak_policy_anti": pl.Float64,
+            }
+        )
+    return schema
+
+
+def _sentiment_schema() -> Dict[str, pl.DataType]:
+    """Return the expected Polars schema for sentiment output rows."""
+    return {
+        "id": pl.Utf8,
+        "created_utc": pl.Int64,
+        "subreddit": pl.Utf8,
+        "ideology_group": pl.Utf8,
+        "is_submission": pl.Boolean,
+        "record_type": pl.Utf8,
+        "text": pl.Utf8,
+        "sent_vader_compound": pl.Float64,
+        "sent_transformer_label": pl.Utf8,
+        "sent_transformer_score": pl.Float64,
+    }
+
+
 def _load_inputs(parquet_dir: Path, limit: int | None) -> pl.DataFrame:
     scan = pl.scan_parquet(str(parquet_dir / "**" / "*.parquet"), glob=True)
     scan = scan.select(["id", "created_utc", "subreddit", "ideology_group", "is_submission", "text"])
@@ -246,7 +305,8 @@ def run_stance_label(
         output_rows.append(record)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    new_df = pl.DataFrame(output_rows)
+    stance_schema = _stance_schema(include_weak=use_weak_rules and weak_scorer is not None)
+    new_df = pl.from_dicts(output_rows, schema=stance_schema)
     # If file exists and not overwriting, merge (dedup by id) to ensure idempotency.
     if overwrite:
         new_df.write_csv(out_path)
@@ -354,7 +414,8 @@ def run_sentiment(
         )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    new_df = pl.DataFrame(results)
+    sentiment_schema = _sentiment_schema()
+    new_df = pl.from_dicts(results, schema=sentiment_schema)
     if overwrite:
         new_df.write_csv(out_path)
     elif out_path.exists():

@@ -9,7 +9,7 @@ description = "EV stance analysis toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "EV Stance Team", email = "team@example.com"}]
+authors = [{name = "OpenFis", email = "team@example.com"}]
 dependencies = [
     "polars>=0.20",
     "pyarrow>=15",
@@ -28,8 +28,8 @@ dependencies = [
     "scikit-learn>=1.4",
     "nltk>=3.8",
     "matplotlib>=3.8",
-    "seaborn>=0.13",
     "plotly>=5.19",
+    "seaborn>=0.13.2",
 ]
 
 [project.optional-dependencies]

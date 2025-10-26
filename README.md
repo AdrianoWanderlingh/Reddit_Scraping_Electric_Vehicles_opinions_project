@@ -195,11 +195,10 @@ Resumable: existing IDs in the output CSV are skipped.
 
 #### 4) Analysis and plots
 
-Generates `trend_monthly.png`, `sentiment_boxplot.png`, and `distinctive_ngrams.csv`
-plus an `analysis_manifest.json` describing generated outputs.
+Generates an output html with plots.
 
 ```bash
-python scripts/run_analysis.py --stance_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\stance_labels.csv" --sentiment_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\sentiment_labels.csv" --out_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\analysis_subset" --timeframe monthly
+python scripts/analyze_ev.py --stance_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\stance_labels.csv" --sentiment_csv "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\sentiment_labels.csv" --out_dir "$env:USERPROFILE\Documents\Reddit_EV_data_and_outputs\results\analysis_subset" --timeframe monthly
 ```
 
 ---

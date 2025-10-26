@@ -1,0 +1,74 @@
+id,created_utc,subreddit,ideology_group,is_submission,record_type,text,sent_vader_compound,sent_transformer_label,sent_transformer_score
+iapr1uq,1654035130,Futurology,,false,comment,"Unfortunately, this article doesn’t take into account the recent increases in charging costs with Tesla and EV’s in North America.
+Charging costs are rising 5 fold in Victoria BC whereas Tesla is charging as much as 2-3 times what was charged before.
+
+Thankfully, if you have a charger at home, that’s your one spot that they haven’t managed to jack up your costs.",-0.1027,negative,0.9990043044090271
+iapr4dr,1654035162,Futurology,,false,comment,"Apartment-style condo here. The ranges of EVs are nowadays up in a range I'm more-or-less comfortable with, but charging would be a definite issue for me; my parking spot isn't so far from my balcony that I couldn't find a cord that would reach (probably) but I suspect that I'd be breaking bylaws either by having something like that hanging off, or by having it run across the grass and sidewalk on the way to the car, or both.
+
+I'm hoping that, at some point, developments like mine will start putting in charging stations to attract residents with EVs, but not all of them can afford to do that without some kind of outside funding.",0.9393,negative,0.998471200466156
+iapr8y7,1654035220,Futurology,,false,comment,My only concern with an EV is battery longevity. I can’t afford upgrading my car or replacing the battery every 5-10 years,0.0,negative,0.9804716110229492
+iaprxwp,1654035535,Futurology,,false,comment,"It's what has happened so far. The nissan EV became the cheapest used EV (you could get them for $3k at one point) because the battery was toast after just 5 years of use....but the technology has come a long way (and the nissans was total crap when new anyway) and most cars at 10 years old start to need some major work done, factoring in the ongoing maintenance costs of an ICE even with a totally new battery you would potentially be better off in many cases.
+
+
+You have to remember to compare like for like too. A tesla p100d needs to be compared with top level cars, and maintaining your AMG65 or M5 for 10 years almost buys you a new model 3 on its own, if not a couple years old p260d or whatever they will have then.
+
+
+I am still not fully on board with pure EVs. But they are so so close to the break even point that it's not going to take long to convince me.",0.6601,negative,0.9967239499092102
+iapsz39,1654036005,Futurology,,false,comment,"I drive a Chevy volt (32 miles pure EV, then it turns into a hybrid).  It is a 2016, 75,000  miles.  Other than tires, brakes and 2 oil changes (which you won’t have on a EV), I had the coolant pump for the battery cooling die on me at a cost of $300.  That’s it.  
+
+Charging at home is about $2/day (30 miles a day).",-0.5994,negative,0.9934828877449036
+iapul9o,1654036762,Futurology,,false,comment,"You don't have to leave an EV at a charger for 2-4 hours either. DC fast charging is on a vast majority of cars, and I believe all of them currently on the market. Mine will fully charge in 90 minutes, most of that is trying to get from 80-100%. Going from 10-80 is *significantly* faster, and my car is definitely one of the slower platforms out there.
+
+Plug in, get some groceries like you do anyway. 30 minutes will give you more range than you'd expect.",0.654,positive,0.9132303595542908
+iapuse8,1654036855,Futurology,,false,comment,"My main thing I'm waiting for is ability to tow. We have a Tesla, but also have a big ass Wagoneer for now, and will until there is an EV that can pull something even a moderate range.",-0.6249,positive,0.9367867708206177
+iapvhph,1654037185,Futurology,,false,comment,"AFAIK, reserving or refurbishing a battery pack for any EV in the Americas is difficult if not expensive. It’s more pragmatic in Europe where they have kits available that allow you swap out the battery modules inside of the pack yourself.",-0.1531,negative,0.9934159517288208
+iapwtp6,1654037820,Futurology,,false,comment,"Great!
+
+My money is on hydrogen combustion. I think it takes more energy to get it as a liquid into your car, but besides that, it is technologically simpler than lithium ion battery electric vehicles.",0.5482,positive,0.887532651424408
+iapx6qv,1654037994,Futurology,,false,comment,"You don’t need millions of datapoints to form a statistically relevant sample size if the sample set is truly representative of a population. The problem with older model EVs is their designs have changed drastically over 10 years. Battery pack chemistries, BMS systems, charging controllers, drivetrains and ESCs have changed a lot in that time. So I’d be hesitant to compare those old leafs and volts from the early 2010s to modern EVs in any statistical study",-0.2648,negative,0.9962480664253235
+iapxkzy,1654038180,Futurology,,false,comment,"I'm shocked that places like Walmart or restaurants haven't started putting EV chargers in their parking lot
+
+Stop by Walmart / a sit down restaurant and charge your car while you go in and spend money. It seems like they would get a near instant return on investment just by virtue of being the only chargers in the area so people would drive dozens of miles to go there specifically
+
+You'd think city councils would be paying specifically to have some added to parks etc too, since that is the kind of thing that will bring tourists on road trips through your town when you are the only EV charger within 80 miles",0.5106,positive,0.819581925868988
+iapz2ui,1654038894,Futurology,,false,comment,"Ac probaly faster, on evs they use the heat pump for ac, heat, and keeping the battery warm.",0.2263,positive,0.8322999477386475
+iaq2tng,1654040682,Futurology,,false,comment,"I’ve been living in apartments for 5 years with an EV. In California, my apartment building had reserved charging spaces that could be rented, and in Georgia my buildings have had ev chargers that the resident’s can use first come first serve for free.",0.5106,negative,0.9433087706565857
+iapqdbx,1654034816,LouderWithCrowder,,false,comment,"They are the elites they are allowed to do and say anything usually without consequences. 
+You should drive an electric car with a three hundred mile range and totally disarmed .
+To go to your crappy job without which you will lose your crappy health insurance and crappy house.
+While they ride in up armored limo’s with armed security to get on their private jets.
+Yeah that seems fair ….",-0.8225,negative,0.9791166186332703
+iaqta3e,1654053555,Anarcho_Capitalism,,false,comment,"A lot of it would be charging on non-peak times. Time to start getting nuclear plants going asap as well though else coal will be charging the EVs. 
+
+Oh and don’t worry they will hit you with mileage tax. They never forget their cut.",0.1729,positive,0.643263041973114
+ias6i4o,1654089075,Anarcho_Capitalism,,false,comment,"A few reasons. First like I said, charging someone to drive their own car by the mile is insane to me. Who's car is it, yours, or the states? If you say ""yours"" then why are you paying to basically rent it?
+
+Second is who it impacts. More often than not, it's going to impact people who can't afford EVs who have to drive considerably further for work. 
+
+Lastly is insurance. Might sound weird, but I'd assume your insurance will use that tax data to adjust your insurance rates even higher. 
+
+All this to squeeze pennies out of some EVs, and rob the conventional car owner for even more of their income. Nah, I just can't support that.",-0.8806,negative,0.9968720078468323
+iascz3s,1654092206,Anarcho_Capitalism,,false,comment,"As someone in the automotive industry there is so much wrong with this...
+
+In most states EV pay a higher registration to offset the lost fuel tax. Lots of new dealers warn customers that they will be hit with a big bill when registering.
+
+“The current grid system can’t even handle the loads put on them now.” That’s only true for people in California. Pretty much everywhere else has the ability to ramp up when needed. 
+
+Places like California, Chicago and others have variable rate electric pricing. Meaning you pay a higher price to use electric at peak hours, and less when demand is low. Because of this, most, of not all, EV and PHEV have the ability to set charging time slots. So you can tell the car to only charge between 11pm and 6am. 
+
+Also, some automotive manufactures are working on technology so that if you EV is plugged in at peak demand, you can chose to sell electricity back to the grid to make some money, all be it very little.
+
+80 million cars are not going to plug in tomorrow. We have time to make changes to the infrastructure for the higher levels of demand to come with EV. And let’s not forget, refining gas takes tons of energy. Your simply reallocation the energy used there to the electric grid. 
+
+“Network is only designed for homes” electricity doesn’t care what it powers. It could be a car, oven, water heater, HVAC, dryer and it doesn’t care. I specially picked those things because they all draw the same 240V 60Hz power. Charging a car is pretty much equal to doing any of those other things. 
+
+“As alway the politicians haven’t looked beyond their own wallets” yeah that’s sadly true...",0.946,negative,0.9970113039016724
+iblikpz,1654688284,Anarcho_Capitalism,,false,comment,"Well that's dumb. Electric vehicles are optimal for daily commutes near a home charger. They are NOT optimal for multi-destination road trips. Liquid fuels (propane, gasoline, diesel) are optimal for long distance road trips.  
+
+This is like saying the hammer did a terrible job driving a screw into a piece of wood.",-0.0798,negative,0.9990822076797485
+ibm2j4k,1654698689,Anarcho_Capitalism,,false,comment,"You’re right, the market should find the most efficient form of energy. Unfortunately the thing holding back EV’s is battery technology. Storing energy is the hardest part about clean energy. We can generate it all day, but if it’s not being used right away, it’s very expensive to store. 
+
+Counter that with gasoline that stores easily, is energy dense, and we have a lot of it.",0.8624,negative,0.9699015617370605
+ibm3nfe,1654699186,Anarcho_Capitalism,,false,comment,"Not really. The logistics on that sound like a nightmare. 
+
+And the batteries on most EV’s are not a single battery you can just pull out. It’s typically the whole floor of the car, comprised of thousands of special 18650 batteries in a series.",0.6369,negative,0.9997139573097229

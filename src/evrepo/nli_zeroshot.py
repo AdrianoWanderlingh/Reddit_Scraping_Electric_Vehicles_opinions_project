@@ -35,41 +35,41 @@ _RAW_HYPOTHESES: Dict[str, Dict[str, str]] = {
 _ENSEMBLE_HYPOTHESES: Dict[str, Dict[str, Sequence[str]]] = {
     "product": {
         "pro": (
-            "The author expresses a favorable view of electric cars as a product.",
-            "This text supports electric cars as a product.",
-            "The writer is positive about EVs as consumer products.",
+            "The author supports electric cars as products.",
+            "This text endorses electric vehicles.",
+            "The author argues in favor of buying or using electric cars.",
         ),
         "anti": (
-            "The author expresses an unfavorable view of electric cars as a product.",
-            "This text opposes electric cars as a product.",
-            "The writer is negative about EVs as consumer products.",
+            "The author opposes electric cars as products.",
+            "This text criticizes electric vehicles.",
+            "The author argues against buying or using electric cars.",
         ),
     },
     "mandate": {
         "pro": (
-            "The author expresses a favorable view of mandates or requirements for electric vehicles.",
-            "This text supports EV mandates or requirements.",
-            "The writer is positive about requiring EV adoption.",
+            "The author supports requiring or mandating the use of electric vehicles.",
+            "This text argues in favor of EV mandates.",
+            "The writer endorses rules that require EV adoption.",
         ),
         "anti": (
-            "The author expresses an unfavorable view of mandates or requirements for electric vehicles.",
-            "This text opposes EV mandates or requirements.",
-            "The writer is negative about requiring EV adoption.",
+            "he author opposes requiring or mandating the use of electric vehicles.",
+            "This text argues against EV mandates.",
+            "The writer criticizes rules that require EV adoption.",
         ),
     },
     "policy": {
         "pro": (
-            "The author expresses a favorable view of EV-related policies such as subsidies or regulations, excluding mandates.",
-            "This text supports EV-related policies such as subsidies or non-mandate regulations.",
-            "The writer is positive about EV subsidies or similar policies (not mandates).",
-        ),
-        "anti": (
-            "The author expresses an unfavorable view of EV-related policies such as subsidies or regulations, excluding mandates.",
-            "This text opposes EV-related policies such as subsidies or non-mandate regulations.",
-            "The writer is negative about EV subsidies or similar policies (not mandates).",
-        ),
-    },
-}
+            "The author supports government policies that help EVs, such as subsidies or tax credits, excluding mandates.",
+            "This text argues in favor of EV subsidies or tax credits (not mandates).",
+            "The writer endorses non-mandate EV policies like incentives or standards.",
+            ),
+            "anti": (
+            "The author opposes government policies that help EVs, such as subsidies or tax credits, excluding mandates.",
+            "This text argues against EV subsidies or tax credits (not mandates).",
+            "The writer criticizes non-mandate EV policies like incentives or standards.",
+            ),
+        },
+        }
 
 
 class NliScore:

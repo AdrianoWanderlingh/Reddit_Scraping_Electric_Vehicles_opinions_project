@@ -5,5 +5,5 @@ fusion:
 
   # If your fuser uses a single "neutral_threshold" on the fused max(pro, anti),
   # lower it so you don't over-call neutral under 3-way softmax.
-  neutral_threshold: 0.31
-subject_tie_break_priority: ["mandate","product","policy"]
+  neutral_threshold: 0.29
+subject_tie_break_priority: ["mandate","policy","product"]

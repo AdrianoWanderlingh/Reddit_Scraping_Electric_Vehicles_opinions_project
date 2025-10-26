@@ -34,16 +34,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.patches import Patch
-
-try:
-    import seaborn as sns
-    HAVE_SEABORN = True
-except ImportError:  # pragma: no cover - fallback for lightweight environments
-    sns = None
-    HAVE_SEABORN = False
-    print("[WARN] seaborn not available; using matplotlib fallbacks. Install via 'pip install seaborn'.")
+import seaborn as sns
 
 # Try plotly for Sankey; graceful fallback if missing
 try:
@@ -62,10 +53,7 @@ plt.rcParams.update({
     "savefig.dpi": 200,
     "font.size": 10,
 })
-if HAVE_SEABORN:
-    sns.set_palette("Set2")
-else:
-    plt.rcParams["axes.prop_cycle"] = plt.cycler(color=cm.get_cmap("Set2").colors)
+sns.set_palette("Set2")
 
 # -------------------------
 # Robust column detection
@@ -92,7 +80,7 @@ def require_id_column(df: pd.DataFrame) -> str:
 # IO + merge
 # -------------------------
 def load_frames(stance_csv: str, sentiment_csv: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load and merge stance + sentiment CSVs with robust parsing."""
+    """Load and merge stance + sentiment CSVs with robust parsing (no hard dependency on 'score')."""
     stance = pd.read_csv(stance_csv)
     sent = pd.read_csv(sentiment_csv)
 
@@ -100,16 +88,17 @@ def load_frames(stance_csv: str, sentiment_csv: str) -> Tuple[pd.DataFrame, pd.D
     stance = stance.rename(columns={require_id_column(stance): "id"})
     sent   = sent.rename(columns={require_id_column(sent): "id"})
 
-    # Normalize ideology in both
+    # Normalize ideology in both (turn empty strings into NaN)
     for df in (stance, sent):
         if "ideology_group" in df.columns:
-            df["ideology_group"] = df["ideology_group"].astype(str).str.strip().str.lower()
+            df["ideology_group"] = (
+                df["ideology_group"].astype(str).str.strip().str.lower().replace({"": np.nan})
+            )
 
     # Sentiment fields
     if "sent_vader_compound" not in sent.columns:
         raise KeyError("sentiment_labels.csv must include 'sent_vader_compound'")
     sent["sentiment_vader"] = pd.to_numeric(sent["sent_vader_compound"], errors="coerce")
-
     if "sent_transformer_label" in sent.columns:
         sent["sentiment_transformer_label"] = sent["sent_transformer_label"].astype(str).str.lower()
     if "sent_transformer_score" in sent.columns:
@@ -134,54 +123,50 @@ def load_frames(stance_csv: str, sentiment_csv: str) -> Tuple[pd.DataFrame, pd.D
         merged["ideology_group"] = merged["ideology_group"].fillna(merged["ideology_group_sent"])
         merged = merged.drop(columns=["ideology_group_sent"])
 
-    # Derive subject & stance — prefer explicit columns if present
+    # Subject & stance from explicit columns if present, else parse from final_category
     if "final_subject" in merged.columns:
         merged["subject"] = merged["final_subject"].astype(str).str.strip().str.lower()
+    elif "final_category" in merged.columns:
+        merged["subject"] = merged["final_category"].str.extract(r"\((product|mandate|policy)\)", expand=False).str.lower()
     else:
-        # Fallback: try to parse from final_category like "Pro-EV (product)"
-        if "final_category" in merged.columns:
-            merged["subject"] = merged["final_category"].str.extract(r"\((product|mandate|policy)\)", expand=False).str.lower()
-        else:
-            merged["subject"] = np.nan
+        merged["subject"] = np.nan
 
     if "final_stance" in merged.columns:
         merged["stance"] = merged["final_stance"].astype(str).str.strip().str.lower()
+    elif "final_category" in merged.columns:
+        merged["stance"] = (
+            merged["final_category"]
+            .str.extract(r"^(Pro|Against|Neutral)", expand=False)
+            .str.lower()
+            .replace({"against": "anti"})
+        )
     else:
-        # Fallback: parse from strings like "Pro-EV", "Against-EV", "Neutral-EV"
-        if "final_category" in merged.columns:
-            merged["stance"] = (
-                merged["final_category"]
-                .str.extract(r"^(Pro|Against|Neutral)", expand=False)
-                .str.lower()
-                .replace({"pro": "pro", "against": "anti", "neutral": "neutral"})
-            )
-        else:
-            merged["stance"] = np.nan
+        merged["stance"] = np.nan
 
-    # Parse created_utc for temporal analysis
+    # Created_utc → datetime
     created_col = find_column(merged, POSSIBLE_CREATED_COLUMNS)
     if created_col:
         merged["created_utc"] = pd.to_numeric(merged[created_col], errors="coerce")
         merged["datetime"] = pd.to_datetime(merged["created_utc"], unit="s", errors="coerce")
         merged["year_month"] = merged["datetime"].dt.to_period("M")
 
-    # Score column for engagement analysis
+    # Score/ups might not exist in your data; only map if found
     score_col = find_column(merged, POSSIBLE_SCORE_COLUMNS)
     if score_col and score_col != "score":
         merged = merged.rename(columns={score_col: "score"})
     if "score" in merged.columns:
         merged["score"] = pd.to_numeric(merged["score"], errors="coerce")
 
-    # Subreddit column
+    # Subreddit name normalization
     sub_col = find_column(merged, POSSIBLE_SUBREDDIT_COLUMNS)
     if sub_col and sub_col != "subreddit":
         merged = merged.rename(columns={sub_col: "subreddit"})
 
-    # Confidence to numeric
+    # Confidence numeric
     if "confidence" in merged.columns:
         merged["confidence"] = pd.to_numeric(merged["confidence"], errors="coerce")
 
-    # Derive subject-specific NLI scores into generic columns for diagnostics
+    # Subject-specific NLI → generic columns for diagnostics
     subject_to_cols = {
         "product": ("nli_product_pro", "nli_product_anti"),
         "mandate": ("nli_mandate_pro", "nli_mandate_anti"),
@@ -193,15 +178,16 @@ def load_frames(stance_csv: str, sentiment_csv: str) -> Tuple[pd.DataFrame, pd.D
         for subj, (pro_col, anti_col) in subject_to_cols.items():
             mask = merged["subject"].eq(subj)
             if pro_col in merged.columns:
-                merged.loc[mask, "nli_pro"] = pd.to_numeric(merged.loc[mask, pro_col], errors="coerce")
+                merged.loc[mask, "nli_pro"]  = pd.to_numeric(merged.loc[mask, pro_col],  errors="coerce")
             if anti_col in merged.columns:
                 merged.loc[mask, "nli_anti"] = pd.to_numeric(merged.loc[mask, anti_col], errors="coerce")
 
-    # Keep only valid subjects/stances
+    # Validate values
     merged.loc[~merged["subject"].isin(["product", "mandate", "policy"]), "subject"] = np.nan
     merged.loc[~merged["stance"].isin(["pro", "anti", "neutral"]), "stance"] = np.nan
 
     return merged, stance, sent
+
 
 # -------------------------
 # Utility functions
@@ -216,94 +202,6 @@ def _ci95(mean: float, std: float, n: int) -> Tuple[float, float]:
     return mean - 1.96 * se, mean + 1.96 * se
 
 STANCE_COLORS = {"pro": "#2ecc71", "anti": "#e74c3c", "neutral": "#95a5a6"}
-STANCE_ORDER = ["pro", "anti", "neutral"]
-
-
-def _violinplot_fallback(ax: plt.Axes, data: pd.DataFrame, *, x: str, y: str, hue: str) -> None:
-    """Draw a basic violin plot using matplotlib when seaborn is unavailable."""
-    categories = [c for c in data[x].dropna().unique()]
-    stances = [s for s in STANCE_ORDER if s in data[hue].dropna().unique()]
-    if not categories or not stances:
-        return
-
-    width = 0.8 / max(len(stances), 1)
-    centers = np.arange(len(categories), dtype=float)
-
-    for idx, cat in enumerate(categories):
-        for jdx, stance in enumerate(stances):
-            subset = data[(data[x] == cat) & (data[hue] == stance)][y].dropna()
-            if subset.empty:
-                continue
-            offset = (jdx - (len(stances) - 1) / 2.0) * width
-            position = centers[idx] + offset
-            parts = ax.violinplot(
-                subset.values,
-                positions=[position],
-                widths=width * 0.9,
-                showextrema=False,
-                showmeans=False,
-                showmedians=True,
-            )
-            for body in parts["bodies"]:
-                body.set_facecolor(STANCE_COLORS.get(stance, "#888888"))
-                body.set_edgecolor("black")
-                body.set_alpha(0.65)
-            if parts.get("cmedians") is not None:
-                parts["cmedians"].set_color("black")
-
-    ax.set_xticks(centers)
-    ax.set_xticklabels([str(cat).capitalize() for cat in categories])
-
-    handles = [
-        Patch(facecolor=STANCE_COLORS.get(stance, "#888888"), edgecolor="black", label=stance.capitalize())
-        for stance in stances
-    ]
-    if handles:
-        ax.legend(handles=handles, title="Stance", loc="lower right")
-
-
-def _heatmap_fallback(ax: plt.Axes, pivot: pd.DataFrame) -> None:
-    """Render a heatmap without seaborn using matplotlib primitives."""
-    data = pivot.values.astype(float)
-    im = ax.imshow(data, aspect="auto", cmap="RdYlGn_r", vmin=np.nanmin(data), vmax=np.nanmax(data))
-    plt.colorbar(im, ax=ax, label="Percentage")
-
-    for i in range(data.shape[0]):
-        for j in range(data.shape[1]):
-            ax.text(
-                j,
-                i,
-                f"{data[i, j]:.1f}",
-                ha="center",
-                va="center",
-                fontsize=9,
-                color="black",
-            )
-
-    ax.set_xticks(np.arange(pivot.shape[1]))
-    ax.set_xticklabels([str(col).capitalize() for col in pivot.columns], rotation=45, ha="right")
-    ax.set_yticks(np.arange(pivot.shape[0]))
-    ax.set_yticklabels([str(idx) for idx in pivot.index])
-
-
-def _boxplot_fallback(ax: plt.Axes, data: pd.DataFrame, *, x: str, y: str) -> None:
-    """Simple grouped boxplot without seaborn."""
-    stances = [s for s in STANCE_ORDER if s in data[x].dropna().unique()]
-    if not stances:
-        return
-
-    values = [data[data[x] == stance][y].dropna().values for stance in stances]
-    positions = np.arange(1, len(stances) + 1)
-    bp = ax.boxplot(values, positions=positions, widths=0.6, patch_artist=True)
-    for patch, stance in zip(bp["boxes"], stances):
-        patch.set_facecolor(STANCE_COLORS.get(stance, "#888888"))
-        patch.set_edgecolor("black")
-        patch.set_alpha(0.7)
-    for element in ("whiskers", "caps", "medians", "fliers"):
-        for artist in bp[element]:
-            artist.set(color="black", linewidth=1)
-    ax.set_xticks(positions)
-    ax.set_xticklabels([s.capitalize() for s in stances])
 
 # -------------------------
 # ESSENTIAL CORE PLOTS
@@ -455,23 +353,13 @@ def plot_confidence_distributions(df: pd.DataFrame, outdir: str) -> str:
     for idx, subj in enumerate(subjects):
         ax = axes[idx]
         subdf = work[work["subject"] == subj]
-        if HAVE_SEABORN:
-            sns.violinplot(
-                data=subdf,
-                x="ideology_group",
-                y="confidence",
-                hue="stance",
-                split=False,
-                ax=ax,
-                inner="quartile",
-                palette=STANCE_COLORS,
-            )
-            ax.legend(title="Stance", loc="lower right")
-        else:
-            _violinplot_fallback(ax, subdf, x="ideology_group", y="confidence", hue="stance")
+        sns.violinplot(data=subdf, x="ideology_group", y="confidence",
+                       hue="stance", split=False, ax=ax, inner="quartile",
+                       palette=STANCE_COLORS)
         ax.set_title(f"{subj.capitalize()}", fontsize=12, fontweight="bold")
         ax.set_xlabel("Ideology Group", fontsize=10)
         ax.set_ylabel("Stance Confidence", fontsize=10)
+        ax.legend(title="Stance", loc="lower right")
 
     plt.suptitle("Stance Confidence Distributions",
                  fontsize=14, fontweight="bold", y=1.02)
@@ -586,19 +474,8 @@ def plot_subreddit_heatmap(df: pd.DataFrame, outdir: str) -> str:
     pivot = pivot.sort_values(["_ideology", "anti"], ascending=[True, False]).drop(columns=["_ideology"])
 
     fig, ax = plt.subplots(figsize=(10, max(8, len(pivot)*0.3)))
-    if HAVE_SEABORN:
-        sns.heatmap(
-            pivot,
-            annot=True,
-            fmt=".1f",
-            cmap="RdYlGn_r",
-            center=33.3,
-            cbar_kws={"label": "Percentage"},
-            ax=ax,
-            linewidths=0.5,
-        )
-    else:
-        _heatmap_fallback(ax, pivot)
+    sns.heatmap(pivot, annot=True, fmt=".1f", cmap="RdYlGn_r", center=33.3,
+                cbar_kws={"label": "Percentage"}, ax=ax, linewidths=0.5)
 
     ax.set_title("Stance Distribution by Subreddit", fontsize=14, fontweight="bold")
     ax.set_xlabel("Stance", fontsize=11)
@@ -610,25 +487,37 @@ def plot_subreddit_heatmap(df: pd.DataFrame, outdir: str) -> str:
     return out
 
 def plot_engagement_analysis(df: pd.DataFrame, outdir: str) -> str:
-    """7. Score/Engagement Analysis - box plots of Reddit scores."""
+    """7. Score/Engagement Analysis — safely skip if no score/ups column present."""
     os.makedirs(outdir, exist_ok=True)
-    work = df.dropna(subset=["score", "ideology_group", "stance"]).copy()
-    if work.empty or "score" not in work.columns:
+
+    # If the dataframe has no 'score', return early (your CSVs don't include it)
+    if "score" not in df.columns:
+        print("[INFO] Skipping engagement analysis: no 'score' (or ups) column found.")
         return ""
 
+    work = df.dropna(subset=["score", "ideology_group", "stance"]).copy()
+    if work.empty:
+        print("[INFO] Skipping engagement analysis: no rows with score+ideology+stance.")
+        return ""
+
+    # Log-transform (shift by +2 to keep non-positive scores safe)
     work["log_score"] = np.log10(work["score"] + 2)
 
     ideos = sorted(work["ideology_group"].dropna().unique())
+    if len(ideos) == 0:
+        print("[INFO] Skipping engagement analysis: ideology_group empty after NA drop.")
+        return ""
+
     fig, axes = plt.subplots(1, len(ideos), figsize=(7*len(ideos), 6))
     if len(ideos) == 1:
         axes = [axes]
 
     for ax, ideo in zip(axes, ideos):
         subdf = work[work["ideology_group"] == ideo]
-        if HAVE_SEABORN:
-            sns.boxplot(data=subdf, x="stance", y="log_score", ax=ax, palette=STANCE_COLORS)
-        else:
-            _boxplot_fallback(ax, subdf, x="stance", y="log_score")
+        if subdf.empty:
+            continue
+        sns.boxplot(data=subdf, x="stance", y="log_score", ax=ax,
+                    palette=STANCE_COLORS, order=["pro", "anti", "neutral"])
         ax.set_title(f"{ideo.capitalize()}", fontsize=12, fontweight="bold")
         ax.set_xlabel("Stance", fontsize=10)
         ax.set_ylabel("Log10(Score + 2)", fontsize=10)

@@ -37,7 +37,7 @@ Default (fast, production): NLI‑only decision using a lightweight MNLI model.
 - Weak cues + fusion: Phrase‑based weak cues can be enabled; when on, stance uses a weighted fusion of weak cues and MNLI (w_weak=0.4, w_nli=0.6 by default).
 
 ## Sentiment Analysis
-- VADER: Computes the standard compound score.
+- VADER: Computes the standard compound score. The Valence Aware Dictionary and sEntiment Reasoner is a lexicon and rule-based sentiment analysis tool that is specifically attuned to sentiments expressed in social media. Note that sentiment polarity is itself not necessarily the most useful metric that exists.
 - Transformer: A modern classifier returns a discrete label and confidence (implementation uses a HuggingFace pipeline under the hood).
 - Outputs: For each text id, the dataset stores VADER compound, transformer label, and transformer score.
 
