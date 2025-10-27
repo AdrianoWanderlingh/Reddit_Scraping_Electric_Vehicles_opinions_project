@@ -796,73 +796,56 @@ def generate_html_report(df: pd.DataFrame, outdir: str, plot_paths: Dict[str, st
         </section>
         """
 
-    # --- CAPTIONS (plain-language, a bit longer) ---
+    # --- CAPTIONS (plain-language) ---
     cap_stance_by_ideol = (
         "Each panel is an <em>EV subject</em> (product, mandate, policy). "
         "Within each panel, bars are stacked proportions that sum to 100% for each ideology group. "
-        "<strong>How to read:</strong> taller green means more <em>Pro</em>; taller red means more <em>Anti</em>; "
-        "grey is <em>Neutral</em> (the model could not clearly decide). "
-        "<strong>What it could mean:</strong> this shows the balance of stances inside each community type, "
-        "not absolute volume. A large grey share suggests comments are ambiguous or off-topic for stance."
     )
 
     cap_stance_no_neutral = (
         "Same as 1), but <strong>Neutral is removed</strong> so the split between clear <em>Pro</em> (green) "
         "and <em>Anti</em> (red) is easier to see. Bars still sum to 100% within ideology. "
-        "<strong>How to read:</strong> compare green vs red heights for each ideology to see which stance dominates "
-        "among items where the model was confident. "
-        "<strong>Caution:</strong> removing Neutral changes the denominator; this plot highlights contrast but "
-        "does not show how many items were filtered out as Neutral."
     )
 
     cap_temporal = (
         "Lines show how stance proportions change <em>over time</em> within each ideology for the selected subject. "
         "Solid lines with circles are <strong>Liberal</strong>, dashed lines with squares are <strong>Conservative</strong>. "
         "Colors indicate stance (green=Pro, red=Anti, grey=Neutral). "
-        "<strong>How to read:</strong> for a given month, move vertically to see the share of a stance within an ideology. "
-        "<strong>What it could mean:</strong> spikes or dips often correspond to news events or viral threads. "
-        "Smaller sample months may look noisy."
     )
 
     cap_sankey = (
-        "The width of each flow is proportional to the number of items. Left to right: <em>Ideology → Subject → Stance</em>. "
-        "<strong>How to read:</strong> start from a group on the left, follow the thickest bands to see which subject "
-        "people discuss most and how those discussions break into Pro/Anti/Neutral. "
-        "<strong>What it could mean:</strong> reveals which topics tend to produce clearer stances and whether one ideology "
-        "feeds disproportionately into Anti or Pro outcomes."
+        "An Extra plot to understand the data distribution. The width of each flow is proportional to the number of items. Left to right: <em>Ideology → Subject → Stance</em>. "
+        "<strong>What it could mean:</strong> reveal whether one ideology feeds disproportionately into Anti or Pro outcomes and the totals by ideology."
     )
 
     cap_confidence = (
         "Distributions of the model’s <em>confidence</em> (|Pro−Anti|) by ideology and stance, faceted by subject. "
-        "<strong>How to read:</strong> a wider violin at a higher value means more items with strong, unambiguous stance. "
+        "A wider violin at a higher value means more items with strong, unambiguous stance. "
         "Neutral items typically cluster near zero since neither Pro nor Anti clearly won. "
-        "<strong>What it could mean:</strong> if one ideology shows consistently higher confidence for a stance, "
-        "it indicates clearer language patterns for that stance in that community."
+        "If one ideology shows consistently higher confidence for a stance, "
+        "it indicates clearer language patterns recognised for that stance in that community."
     )
 
     cap_vader = (
         "Each hex cell shows how many items fall at a given combination of <em>sentiment</em> (x-axis) and "
         "<em>signed stance confidence</em> (y-axis: +Pro, 0 Neutral, −Anti). "
-        "<strong>How to read:</strong> look for dense areas: far right means positive tone; far left negative tone; "
+        "Far right (1) means positive tone; far left (-1) negative tone; "
         "higher means confident Pro; lower means confident Anti. "
-        "<strong>What it could mean:</strong> sentiment and stance are related but not identical—"
-        "you can have positive tone with Anti stance (e.g., praising a counter-argument) or negative tone with Pro stance "
+        "Sentiment and stance are related but not identical; you can have positive tone with Anti stance (e.g., praising a counter-argument) or negative tone with Pro stance "
         "(e.g., criticizing opponents while supporting EVs)."
     )
 
     cap_transformer = (
         "Same as 5a but using a transformer sentiment classifier (signed by label). "
-        "<strong>How to read:</strong> similar to the VADER plot—dense clusters indicate common pairings of sentiment and stance confidence. "
-        "<strong>What it could mean:</strong> agreement between 5a and 5b increases trust that the sentiment–stance relationship is real; "
-        "disagreement may signal sarcasm or domain vocabulary."
+        "<strong>How to read:</strong> similar to the VADER plot; dense clusters indicate common pairings of sentiment and stance confidence. "
     )
 
     cap_heatmap = (
         "Rows are subreddits; columns are stance percentages. "
-        "<strong>How to read:</strong> each row sums to ~100% across stances. "
-        "Green cells mean higher Pro share, red higher Anti, grey higher Neutral. "
-        "<strong>What it could mean:</strong> communities with unusually high Anti (or Pro) percentages stand out. "
-        "This does not indicate statistical significance—just relative composition."
+        "Each row sums to ~100% across stances. "
+        "Green cells mean higher Pro share, red higher Anti"
+        "Communities with unusually high Anti (or Pro) percentages stand out. "
+        "This does not indicate statistical significance—just relative composition, which may have many underlying factors."
     )
 
     cap_engagement = (
@@ -875,8 +858,8 @@ def generate_html_report(df: pd.DataFrame, outdir: str, plot_paths: Dict[str, st
     cap_diag = (
         "Quality checks for the stance classifier. Left: scatter of NLI Pro vs Anti scores; the diagonal is the decision boundary. "
         "Middle: distribution of (Pro−Anti); right: how overall confidence relates to the max NLI score. "
-        "<strong>How to read:</strong> many points near the diagonal imply harder cases; clear clusters away from it imply easier calls. "
-        "<strong>What it could mean:</strong> helps assess whether the threshold is reasonable and whether Neutral volume is expected."
+        "Many points near the diagonal imply harder cases; clear clusters away from it imply easier calls. "
+        "It may help assess whether the threshold is reasonable and whether Neutral volume is expected."
     )
 
     html = f"""<!doctype html>
